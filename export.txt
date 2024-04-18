@@ -1,46 +1,38 @@
-import java.util.Calendar;
-import java.text.SimpleDateFormat;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.io.IOException;
 
-// Function to generate authentication token
-String generateAuthToken() {
-    // Your logic to generate the authentication token here
-    return "your_generated_token";
-}
+// Create an HttpClient
+HttpClient httpClient = HttpClient.newHttpClient();
 
-// Check if token needs to be regenerated
-boolean shouldRegenerateToken() {
-    SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+// Define the URL of the HTTP endpoint
+String url = "http://example.com/api/endpoint";
+
+// Build the HTTP request
+HttpRequest request = HttpRequest.newBuilder()
+        .uri(URI.create(url))
+        .GET()
+        .build();
+
+try {
+    // Send the HTTP request and receive the response
+    HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
     
-    // Get current time
-    Calendar currentTime = Calendar.getInstance();
-    String currentTimeStr = dateFormat.format(currentTime.getTime());
-
-    // Get expiry time of token
-    String tokenExpiryStr = vars.get("token_expiry");
+    // Get the response status code
+    int statusCode = response.statusCode();
     
-    // Check if token has expired
-    if (tokenExpiryStr == null || currentTimeStr.compareTo(tokenExpiryStr) >= 0) {
-        return true;
-    }
+    // Get the response body
+    String responseBody = response.body();
     
-    return false;
+    // Log the response details
+    log.info("Response Status Code: " + statusCode);
+    log.info("Response Body: " + responseBody);
+    
+    // You can parse and process the response body here as needed
+    
+} catch (IOException | InterruptedException e) {
+    // Handle any exceptions that occur during the HTTP request
+    log.error("Error sending HTTP request: " + e.getMessage());
 }
-
-// Generate token if needed and update cache
-void updateAuthTokenIfNeeded() {
-    if (shouldRegenerateToken()) {
-        String authToken = generateAuthToken();
-        
-        // Set token and expiry time
-        vars.put("auth_token", authToken);
-        
-        Calendar expiryTime = Calendar.getInstance();
-        expiryTime.add(Calendar.MINUTE, 60); // Assuming token expires in 60 minutes
-        String expiryTimeStr = dateFormat.format(expiryTime.getTime());
-        vars.put("token_expiry", expiryTimeStr);
-        
-        log.info("Generated new token: " + authToken);
-    }
-}
-
-updateAuthTokenIfNeeded();
