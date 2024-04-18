@@ -1,35 +1,49 @@
-import org.apache.http.HttpResponse;
-import org.apache.http.client.HttpClient;
-import org.apache.http.client.methods.HttpGet;
-import org.apache.http.impl.client.HttpClients;
-import org.apache.http.util.EntityUtils;
+import org.apache.hc.client5.http.HttpResponseException;
+import org.apache.hc.client5.http.classic.methods.HttpPost;
+import org.apache.hc.client5.http.entity.EntityUtils;
+import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
+import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
+import org.apache.hc.client5.http.impl.classic.HttpClients;
+import org.apache.hc.core5.http.ContentType;
+import org.apache.hc.core5.http.io.entity.StringEntity;
 
 try {
     // Create HttpClient instance
-    HttpClient httpClient = HttpClients.createDefault();
-    
-    // Define the URL of the REST endpoint
-    String apiUrl = "https://api.example.com/resource";
-    
-    // Create HTTP GET request
-    HttpGet httpGet = new HttpGet(apiUrl);
+    try (CloseableHttpClient httpclient = HttpClients.createDefault()) {
+        // Define the URL of the REST endpoint
+        String url = "http://your-rest-api-endpoint";
 
-    // Execute HTTP request
-    HttpResponse response = httpClient.execute(httpGet);
+        // Define the JSON payload
+        String jsonPayload = "{\"key\": \"value\"}";
 
-    // Process response
-    int statusCode = response.getStatusLine().getStatusCode();
-    log.info("Response code: " + statusCode);
-    
-    // If response is successful (status code 200)
-    if (statusCode == 200) {
-        // Extract response body and do further processing if needed
-        String responseBody = EntityUtils.toString(response.getEntity());
-        log.info("Response body: " + responseBody);
-    } else {
-        // Handle error response
-        log.error("Error response: " + EntityUtils.toString(response.getEntity()));
+        // Create HTTP POST request
+        HttpPost httpPost = new HttpPost(url);
+
+        // Set Content-Type header
+        httpPost.setHeader("Content-Type", "application/json");
+
+        // Set payload
+        httpPost.setEntity(new StringEntity(jsonPayload, ContentType.APPLICATION_JSON));
+
+        // Execute HTTP request
+        try (CloseableHttpResponse response = httpclient.execute(httpPost)) {
+            // Process response
+            int statusCode = response.getCode();
+            log.info("Response code: " + statusCode);
+
+            // If response is successful (status code 200)
+            if (statusCode == 200) {
+                // Extract response body
+                String responseBody = EntityUtils.toString(response.getEntity());
+                log.info("Response body: " + responseBody);
+            } else {
+                // Handle error response
+                log.error("Error response: " + EntityUtils.toString(response.getEntity()));
+            }
+        }
     }
+} catch (HttpResponseException e) {
+    log.error("HTTP response exception occurred: " + e.getMessage());
 } catch (Exception e) {
     log.error("Exception occurred: " + e.getMessage());
 }
