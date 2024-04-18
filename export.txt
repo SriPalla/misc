@@ -1,0 +1,46 @@
+import java.util.Calendar;
+import java.text.SimpleDateFormat;
+
+// Function to generate authentication token
+String generateAuthToken() {
+    // Your logic to generate the authentication token here
+    return "your_generated_token";
+}
+
+// Check if token needs to be regenerated
+boolean shouldRegenerateToken() {
+    SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+    
+    // Get current time
+    Calendar currentTime = Calendar.getInstance();
+    String currentTimeStr = dateFormat.format(currentTime.getTime());
+
+    // Get expiry time of token
+    String tokenExpiryStr = vars.get("token_expiry");
+    
+    // Check if token has expired
+    if (tokenExpiryStr == null || currentTimeStr.compareTo(tokenExpiryStr) >= 0) {
+        return true;
+    }
+    
+    return false;
+}
+
+// Generate token if needed and update cache
+void updateAuthTokenIfNeeded() {
+    if (shouldRegenerateToken()) {
+        String authToken = generateAuthToken();
+        
+        // Set token and expiry time
+        vars.put("auth_token", authToken);
+        
+        Calendar expiryTime = Calendar.getInstance();
+        expiryTime.add(Calendar.MINUTE, 60); // Assuming token expires in 60 minutes
+        String expiryTimeStr = dateFormat.format(expiryTime.getTime());
+        vars.put("token_expiry", expiryTimeStr);
+        
+        log.info("Generated new token: " + authToken);
+    }
+}
+
+updateAuthTokenIfNeeded();
