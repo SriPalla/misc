@@ -1,28 +1,20 @@
-// Import necessary classes
-import groovyx.net.http.RESTClient
-import groovy.json.JsonSlurper
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 
-// Define the URL of the endpoint
-def url = 'https://example.com/api/endpoint'
+// Get current date and time
+def currentDateTime = LocalDateTime.now()
 
-// Define the form data parameters
-def formData = [
-    param1: 'value1',
-    param2: 'value2'
-]
+// Decrement 50 minutes from current date and time
+def modifiedDateTime = currentDateTime.minusMinutes(50)
 
-// Create an instance of RESTClient
-def restClient = new RESTClient(url)
+// Define date format
+def formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
 
-// Send the POST request with form data
-def response = restClient.post(body: formData)
+// Format modified date and time as per your requirement
+def modifiedDateTimeString = modifiedDateTime.format(formatter)
 
-// Parse the JSON response
-def jsonSlurper = new JsonSlurper()
-def jsonResponse = jsonSlurper.parseText(response.data)
+// Log the modified date and time
+log.info("Modified Date and Time: " + modifiedDateTimeString)
 
-// Access data from the JSON response
-def responseData = jsonResponse.data // Replace 'data' with the actual key you want to access
-
-// Log or use the response data as needed
-log.info("Response Data: $responseData")
+// Store the modified date and time in a JMeter variable if needed
+vars.put("modifiedDateTime", modifiedDateTimeString)
