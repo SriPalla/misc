@@ -1,34 +1,21 @@
 import org.apache.http.HttpResponse;
 import org.apache.http.client.HttpClient;
-import org.apache.http.client.methods.HttpPost;
-import org.apache.http.entity.StringEntity;
+import org.apache.http.client.methods.HttpGet;
 import org.apache.http.impl.client.HttpClients;
+import org.apache.http.util.EntityUtils;
 
 try {
     // Create HttpClient instance
     HttpClient httpClient = HttpClients.createDefault();
     
-    // Define the URL of the token endpoint
-    String tokenUrl = "https://example.com/token";
+    // Define the URL of the REST endpoint
+    String apiUrl = "https://api.example.com/resource";
     
-    // Define client credentials
-    String clientId = "your_client_id";
-    String clientSecret = "your_client_secret";
-
-    // Define the payload (grant_type, client_id, and client_secret)
-    String payload = "grant_type=client_credentials&client_id=" + clientId + "&client_secret=" + clientSecret;
-
-    // Create HTTP POST request
-    HttpPost httpPost = new HttpPost(tokenUrl);
-
-    // Set Content-Type header
-    httpPost.setHeader("Content-Type", "application/x-www-form-urlencoded");
-
-    // Set payload
-    httpPost.setEntity(new StringEntity(payload));
+    // Create HTTP GET request
+    HttpGet httpGet = new HttpGet(apiUrl);
 
     // Execute HTTP request
-    HttpResponse response = httpClient.execute(httpPost);
+    HttpResponse response = httpClient.execute(httpGet);
 
     // Process response
     int statusCode = response.getStatusLine().getStatusCode();
@@ -36,12 +23,9 @@ try {
     
     // If response is successful (status code 200)
     if (statusCode == 200) {
-        // Extract access token from response and store it in a JMeter variable
+        // Extract response body and do further processing if needed
         String responseBody = EntityUtils.toString(response.getEntity());
-        JSONObject jsonResponse = new JSONObject(responseBody);
-        String accessToken = jsonResponse.getString("access_token");
-        vars.put("access_token", accessToken);
-        log.info("Access token: " + accessToken);
+        log.info("Response body: " + responseBody);
     } else {
         // Handle error response
         log.error("Error response: " + EntityUtils.toString(response.getEntity()));
