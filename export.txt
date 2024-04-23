@@ -1,20 +1,54 @@
-import java.time.LocalDateTime
-import java.time.format.DateTimeFormatter
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManagerFactory;
+import java.io.FileInputStream;
+import java.security.KeyStore;
 
-// Get current date and time
-def currentDateTime = LocalDateTime.now()
+public class CustomSSLContext {
 
-// Decrement 50 minutes from current date and time
-def modifiedDateTime = currentDateTime.minusMinutes(50)
+    public static SSLContext createCustomSSLContext() throws Exception {
+        // Load the truststore containing the emulator's certificate
+        KeyStore trustStore = KeyStore.getInstance("JKS");
+        trustStore.load(new FileInputStream("/path/to/truststore.jks"), "password".toCharArray());
 
-// Define date format
-def formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+        // Create a TrustManagerFactory that trusts the certificates in the truststore
+        TrustManagerFactory trustManagerFactory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+        trustManagerFactory.init(trustStore);
 
-// Format modified date and time as per your requirement
-def modifiedDateTimeString = modifiedDateTime.format(formatter)
+        // Create and initialize an SSLContext with the TrustManagerFactory
+        SSLContext sslContext = SSLContext.getInstance("TLS");
+        sslContext.init(null, trustManagerFactory.getTrustManagers(), null);
 
-// Log the modified date and time
-log.info("Modified Date and Time: " + modifiedDateTimeString)
+        return sslContext;
+    }
+}
 
-// Store the modified date and time in a JMeter variable if needed
-vars.put("modifiedDateTime", modifiedDateTimeString)
+import com.mongodb.MongoClientSettings;
+import com.mongodb.MongoCredential;
+import com.mongodb.ServerAddress;
+import com.mongodb.connection.SslSettings;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.data.mongodb.config.AbstractMongoClientConfiguration;
+
+@Configuration
+public class MongoConfig extends AbstractMongoClientConfiguration {
+
+    @Override
+    protected String getDatabaseName() {
+        return "mydb";
+    }
+
+    @Override
+    @Bean
+    public MongoClient mongoClient() {
+        SslSettings sslSettings = SslSettings.builder()
+                .context(CustomSSLContext.createCustomSSLContext())
+                .build();
+
+        MongoClientSettings settings = MongoClientSettings.builder()
+                .applyToSslSettings(builder -> builder.applySettings(sslSettings))
+                .build();
+
+        return com.mongodb.client.MongoClients.create(settings);
+    }
+}
