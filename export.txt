@@ -1,54 +1,17 @@
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.TrustManagerFactory;
-import java.io.FileInputStream;
-import java.security.KeyStore;
+version: "3.8"  # Adjust the version if needed based on your Docker setup
 
-public class CustomSSLContext {
+services:
+  minio:
+    image: quay.io/minio/minio  # Official MinIO image
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=your_access_key  # Replace with your desired access key
+      - MINIO_ROOT_PASSWORD=your_secret_key  # Replace with your desired secret key
+    volumes:
+      - minio-data:/data  # Persistent storage for MinIO data
+    ports:
+      - "9000:9000"  # Expose MinIO API on port 9000 (default)
+      - "9001:9001"  # Optional: Expose MinIO console on port 9001
 
-    public static SSLContext createCustomSSLContext() throws Exception {
-        // Load the truststore containing the emulator's certificate
-        KeyStore trustStore = KeyStore.getInstance("JKS");
-        trustStore.load(new FileInputStream("/path/to/truststore.jks"), "password".toCharArray());
-
-        // Create a TrustManagerFactory that trusts the certificates in the truststore
-        TrustManagerFactory trustManagerFactory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-        trustManagerFactory.init(trustStore);
-
-        // Create and initialize an SSLContext with the TrustManagerFactory
-        SSLContext sslContext = SSLContext.getInstance("TLS");
-        sslContext.init(null, trustManagerFactory.getTrustManagers(), null);
-
-        return sslContext;
-    }
-}
-
-import com.mongodb.MongoClientSettings;
-import com.mongodb.MongoCredential;
-import com.mongodb.ServerAddress;
-import com.mongodb.connection.SslSettings;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.data.mongodb.config.AbstractMongoClientConfiguration;
-
-@Configuration
-public class MongoConfig extends AbstractMongoClientConfiguration {
-
-    @Override
-    protected String getDatabaseName() {
-        return "mydb";
-    }
-
-    @Override
-    @Bean
-    public MongoClient mongoClient() {
-        SslSettings sslSettings = SslSettings.builder()
-                .context(CustomSSLContext.createCustomSSLContext())
-                .build();
-
-        MongoClientSettings settings = MongoClientSettings.builder()
-                .applyToSslSettings(builder -> builder.applySettings(sslSettings))
-                .build();
-
-        return com.mongodb.client.MongoClients.create(settings);
-    }
-}
+volumes:
+  minio-data:  # Persistent storage volume
