@@ -1,25 +1,25 @@
-version: '3'
+import com.google.api.client.http.HttpTransport;
+import com.google.auth.oauth2.GoogleCredentials;
+import com.google.auth.oauth2.ServiceAccountCredentials;
+import java.io.IOException;
 
-services:
-  storage-emulator:
-    image: gcr.io/gcp-emulators/storage-emulator:latest
-    ports:
-      - "8080:8080"  # Local HTTP port for storage emulator
-      - "9191:9191"  # Local gRPC port for storage emulator
-    environment:
-      - CLOUDSDK_CORE_PROJECT=my-test-project  # Set your desired project ID
-    command: ["gcloud", "beta", "emulators", "storage", "start", "--host-port=0.0.0.0:9191"]
+class NoCredentials : GoogleCredentials() {
 
-  minio:
-    image: minio/minio
-    ports:
-      - "9000:9000"  # MinIO Browser GUI port
-    environment:
-      - MINIO_ACCESS_KEY=minioadmin
-      - MINIO_SECRET_KEY=minioadmin
-    command: ["server", "/data"]
-    volumes:
-      - minio-data:/data
+    @Throws(IOException::class)
+    override fun getRequestMetadata() = null
 
-volumes:
-  minio-data:
+    override fun hasRequestMetadata() = false
+
+    override fun hasRequestMetadataOnly() = false
+
+    override fun createScopedRequired() = false
+
+    override fun createScoped(requiredScopes: MutableSet<String>?) = this
+
+    override fun getDefaultTransport(): HttpTransport = super.getDefaultTransport()
+
+    companion object {
+        @JvmStatic
+        fun create(): GoogleCredentials = NoCredentials()
+    }
+}
