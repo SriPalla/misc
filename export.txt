@@ -1,25 +1,56 @@
-import com.google.api.client.http.HttpTransport;
-import com.google.auth.oauth2.GoogleCredentials;
-import com.google.auth.oauth2.ServiceAccountCredentials;
-import java.io.IOException;
+import com.google.cloud.storage.Storage
+import com.google.cloud.storage.StorageOptions
 
-class NoCredentials : GoogleCredentials() {
+fun main() {
+    // Set MinIO server endpoint (replace with your MinIO server URL)
+    val minioEndpoint = "http://localhost:9000"
 
-    @Throws(IOException::class)
-    override fun getRequestMetadata() = null
+    // Set MinIO admin credentials
+    val adminAccessKey = "minioadmin"
+    val adminSecretKey = "minioadmin"
 
-    override fun hasRequestMetadata() = false
+    try {
+        // Create Storage client using MinIO endpoint and admin credentials
+        val storage = StorageOptions.newBuilder()
+            .setHost(minioEndpoint)
+            .setCredentialsProvider { _ ->
+                BasicCredentials(adminAccessKey, adminSecretKey)
+            }
+            .build()
+            .service
 
-    override fun hasRequestMetadataOnly() = false
+        // Example: List buckets
+        val buckets = storage.list().values
+        buckets.forEach { bucket ->
+            println("Bucket: ${bucket.name}")
+        }
 
-    override fun createScopedRequired() = false
+        // Example: Upload object
+        val bucketName = "my-bucket"
+        val blobName = "test-object.txt"
+        val blob = storage.create(bucketName, blobName, "Hello, MinIO!".toByteArray())
+        println("Uploaded object: gs://$bucketName/$blobName")
 
-    override fun createScoped(requiredScopes: MutableSet<String>?) = this
+    } catch (e: Exception) {
+        println("Error connecting to MinIO: ${e.message}")
+    }
+}
 
-    override fun getDefaultTransport(): HttpTransport = super.getDefaultTransport()
+// Custom credentials provider for HTTP basic authentication
+class BasicCredentials(private val accessKey: String, private val secretKey: String) :
+    com.google.auth.Credentials() {
 
-    companion object {
-        @JvmStatic
-        fun create(): GoogleCredentials = NoCredentials()
+    override fun getRequestMetadata(context: MutableMap<String, Any>): MutableMap<String, String> {
+        return mutableMapOf(
+            "Authorization" to "Basic " + Base64.getEncoder().encodeToString("$accessKey:$secretKey".toByteArray())
+        )
+    }
+
+    override fun hasRequestMetadata(): Boolean {
+        return true
+    }
+
+    override fun hasRequestMetadataOnly(): Boolean {
+        return true
     }
 }
