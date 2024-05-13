@@ -1,11 +1,15 @@
-To configure Azure App Configuration with Spring Boot 3.2.3 and Kotlin, including automatic configuration refresh and integration with Actuator health, you'll need to use the `azure-appconfiguration-actuator` and `azure-spring-cloud-starter-appconfiguration-config` dependencies. Below is an example `build.gradle.kts` file that demonstrates how to set up these configurations:
+To set up Azure App Configuration with Spring Boot 3.2.3 using Kotlin, including auto refresh interval and integrating with Azure Feature Management and Actuator health, you'll need to configure your `build.gradle.kts` file appropriately. Below is an example setup that demonstrates how to achieve this.
+
+### 1. Add Dependencies
+
+Make sure to include the required dependencies for Azure App Configuration, Azure Feature Management, Spring Boot, Actuator, and Kotlin support.
 
 ```kotlin
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
+    kotlin("jvm") version "1.5.31"
     id("org.springframework.boot") version "3.2.3"
-    kotlin("jvm") version "1.6.10"
 }
 
 group = "com.example"
@@ -18,13 +22,12 @@ repositories {
 
 dependencies {
     implementation("org.springframework.boot:spring-boot-starter-web")
-    implementation("com.microsoft.azure:azure-spring-cloud-starter-appconfiguration-config:1.4.1")
-    implementation("com.microsoft.azure:azure-appconfiguration-actuator:1.4.1")
-    implementation("org.jetbrains.kotlin:kotlin-stdlib")
+    implementation("com.azure.spring:azure-spring-boot-starter-appconfiguration:3.2.3")
+    implementation("com.microsoft.azure:azure-actuator:1.2.0")
+    implementation("com.microsoft.azure:azure-feature-management-spring-boot-starter:2.3.0")
     implementation("org.jetbrains.kotlin:kotlin-reflect")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.6.0")
-
-    implementation("org.springframework.boot:spring-boot-starter-actuator")
+    implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8")
+    implementation("org.jetbrains.kotlin:kotlin-stdlib")
 }
 
 tasks.withType<KotlinCompile> {
@@ -33,45 +36,66 @@ tasks.withType<KotlinCompile> {
         jvmTarget = "11"
     }
 }
+```
 
-bootJar {
-    archiveFileName = "your-application.jar"
+### 2. Application Configuration
+
+In your Spring Boot application, you'll need to configure Azure App Configuration properties in `application.properties` or `application.yml`.
+
+```properties
+# Azure App Configuration
+spring.cloud.azure.appconfiguration.connection-string=Endpoint=https://your-app-config.azconfig.io;Id=your-id;Secret=your-secret
+spring.cloud.azure.appconfiguration.refresh-interval=5s
+
+# Azure Feature Management
+feature-management.enabled=true
+```
+
+Replace `https://your-app-config.azconfig.io`, `your-id`, and `your-secret` with your actual Azure App Configuration endpoint and credentials.
+
+### 3. Enable Actuator Endpoints
+
+Ensure Actuator endpoints are enabled in your `application.properties` or `application.yml`:
+
+```properties
+management.endpoints.web.exposure.include=*
+```
+
+### 4. Kotlin Application
+
+Create a simple Kotlin Spring Boot application.
+
+```kotlin
+import org.springframework.beans.factory.annotation.Value
+import org.springframework.boot.autoconfigure.SpringBootApplication
+import org.springframework.boot.runApplication
+import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.RestController
+
+@SpringBootApplication
+class MyApp
+
+fun main(args: Array<String>) {
+    runApplication<MyApp>(*args)
 }
 
-// Azure App Configuration properties
-azureAppConfiguration {
-    connectionString = "your-connection-string"
-}
+@RestController
+class MyController {
 
-// Spring Boot application properties
-springBoot {
-    buildInfo()
-}
+    @Value("\${featureFlag.enabled:false}")
+    private lateinit var featureEnabled: String
 
-// Actuator endpoints configuration
-management {
-    endpoints {
-        web {
-            exposure {
-                include = listOf("*")
-            }
-        }
+    @GetMapping("/hello")
+    fun hello(): String {
+        return "Hello World! Feature is enabled: $featureEnabled"
     }
 }
 ```
 
-In this `build.gradle.kts` file:
+In this example, `MyController` demonstrates retrieving a feature flag value from Azure Feature Management.
 
-- We're using the Spring Boot Gradle plugin (`id("org.springframework.boot") version "3.2.3"`) to enable Spring Boot features.
-- The `kotlin("jvm") version "1.6.10"` plugin is added to support Kotlin compilation.
-- Dependencies include `spring-boot-starter-web` for web-based applications, `azure-spring-cloud-starter-appconfiguration-config` and `azure-appconfiguration-actuator` for Azure App Configuration integration and Actuator endpoints.
-- Kotlin standard library (`kotlin-stdlib`) and reflection library (`kotlin-reflect`) are included.
-- `kotlinx-coroutines-core` is added for coroutines support.
-- `spring-boot-starter-actuator` is included for Spring Boot Actuator endpoints.
-- `azureAppConfiguration` block specifies the Azure App Configuration connection string.
-- `springBoot` block is used to configure Spring Boot properties.
-- `management` block configures Actuator endpoints exposure.
+### 5. Actuator Health Endpoint
 
-Replace `"your-connection-string"` in `azureAppConfiguration` with your Azure App Configuration connection string. This `build.gradle.kts` file sets up a basic Spring Boot application with Azure App Configuration integration and Actuator endpoints exposed. Make sure to replace `"your-application.jar"` in `bootJar` with your desired application name.
+To check the health of your application including Azure App Configuration status, access the Actuator health endpoint, usually at `/actuator/health`.
 
-After configuring your `build.gradle.kts` file, you can start integrating Azure App Configuration properties into your Spring Boot application using the `@Value` annotation or the Azure App Configuration SDK for Java/Kotlin. Additionally, Actuator health and other endpoints (`/actuator/health`) will be available by default for monitoring and management purposes.
+That's a basic setup to integrate Azure App Configuration, Azure Feature Management, Actuator, and Kotlin with Spring Boot 3.2.3. Adjustments may be needed based on your specific requirements and environment. Replace placeholders with actual values according to your Azure setup.
