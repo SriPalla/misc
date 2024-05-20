@@ -1,101 +1,52 @@
-To set up Azure App Configuration with Spring Boot 3.2.3 using Kotlin, including auto refresh interval and integrating with Azure Feature Management and Actuator health, you'll need to configure your `build.gradle.kts` file appropriately. Below is an example setup that demonstrates how to achieve this.
+Running a local instance of Cosmos DB using Docker on a Mac with an M2 chip can sometimes be problematic due to architecture differences and compatibility issues. Here are some steps and troubleshooting tips that may help you get it running:
 
-### 1. Add Dependencies
+### 1. Verify Docker Installation
+Ensure Docker is installed and running correctly on your Mac M2. You can download Docker Desktop for Mac from the official [Docker website](https://www.docker.com/products/docker-desktop/).
 
-Make sure to include the required dependencies for Azure App Configuration, Azure Feature Management, Spring Boot, Actuator, and Kotlin support.
+### 2. Use the Correct Image
+As of my knowledge cutoff in 2023, Microsoft provides a Docker image for Cosmos DB emulator, but it's tailored for x64 architecture. Macs with M1/M2 chips use ARM architecture, so you might need to use an alternative method or workaround. 
 
-```kotlin
-import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
-
-plugins {
-    kotlin("jvm") version "1.5.31"
-    id("org.springframework.boot") version "3.2.3"
-}
-
-group = "com.example"
-version = "1.0-SNAPSHOT"
-java.sourceCompatibility = JavaVersion.VERSION_11
-
-repositories {
-    mavenCentral()
-}
-
-dependencies {
-    implementation("org.springframework.boot:spring-boot-starter-web")
-    implementation("com.azure.spring:azure-spring-boot-starter-appconfiguration:3.2.3")
-    implementation("com.microsoft.azure:azure-actuator:1.2.0")
-    implementation("com.microsoft.azure:azure-feature-management-spring-boot-starter:2.3.0")
-    implementation("org.jetbrains.kotlin:kotlin-reflect")
-    implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8")
-    implementation("org.jetbrains.kotlin:kotlin-stdlib")
-}
-
-tasks.withType<KotlinCompile> {
-    kotlinOptions {
-        freeCompilerArgs = listOf("-Xjsr305=strict")
-        jvmTarget = "11"
-    }
-}
+### 3. Pull the Cosmos DB Emulator Image
+To get the latest Cosmos DB emulator Docker image, run:
+```sh
+docker pull mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator
 ```
 
-### 2. Application Configuration
-
-In your Spring Boot application, you'll need to configure Azure App Configuration properties in `application.properties` or `application.yml`.
-
-```properties
-# Azure App Configuration
-spring.cloud.azure.appconfiguration.connection-string=Endpoint=https://your-app-config.azconfig.io;Id=your-id;Secret=your-secret
-spring.cloud.azure.appconfiguration.refresh-interval=5s
-
-# Azure Feature Management
-feature-management.enabled=true
+### 4. Running the Emulator with Compatibility Mode
+Since the Cosmos DB emulator is designed for x64 architecture, you'll need to run it using Docker's built-in emulation for x64:
+```sh
+docker run --rm -it -p 8081:8081 -p 10250:10250 -p 10251:10251 -p 10252:10252 -p 10253:10253 -p 10254:10254 -e AZURE_COSMOS_EMULATOR_PARTITION_COUNT=2 -e AZURE_COSMOS_EMULATOR_ENABLE_DATA_PERSISTENCE=true mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator
 ```
 
-Replace `https://your-app-config.azconfig.io`, `your-id`, and `your-secret` with your actual Azure App Configuration endpoint and credentials.
+### 5. Check Logs for Errors
+If the container fails to start, check the Docker logs for any errors:
+```sh
+docker logs <container_id>
+```
+Replace `<container_id>` with the actual container ID.
 
-### 3. Enable Actuator Endpoints
-
-Ensure Actuator endpoints are enabled in your `application.properties` or `application.yml`:
-
-```properties
-management.endpoints.web.exposure.include=*
+### 6. Ensure Rosetta 2 is Installed
+Rosetta 2 allows Macs with Apple silicon to use apps built for a Mac with an Intel processor. You may need to install Rosetta 2 to ensure compatibility:
+```sh
+softwareupdate --install-rosetta
 ```
 
-### 4. Kotlin Application
+### 7. Troubleshooting Common Issues
+- **Network Issues**: Ensure there are no network conflicts and that ports are available.
+- **Permissions**: Ensure Docker has the necessary permissions to run the container.
+- **Resource Limits**: Check if Docker Desktop resource settings (CPU, memory) are sufficient for running the emulator.
 
-Create a simple Kotlin Spring Boot application.
+### 8. Alternatives
+If you continue to face issues, consider using an alternative approach:
+- **Remote Emulator**: Use the Cosmos DB emulator in a Windows VM or on a remote machine.
+- **Azure Free Tier**: Use the free tier of Azure Cosmos DB for development and testing instead of a local emulator.
 
-```kotlin
-import org.springframework.beans.factory.annotation.Value
-import org.springframework.boot.autoconfigure.SpringBootApplication
-import org.springframework.boot.runApplication
-import org.springframework.web.bind.annotation.GetMapping
-import org.springframework.web.bind.annotation.RestController
-
-@SpringBootApplication
-class MyApp
-
-fun main(args: Array<String>) {
-    runApplication<MyApp>(*args)
-}
-
-@RestController
-class MyController {
-
-    @Value("\${featureFlag.enabled:false}")
-    private lateinit var featureEnabled: String
-
-    @GetMapping("/hello")
-    fun hello(): String {
-        return "Hello World! Feature is enabled: $featureEnabled"
-    }
-}
+### Example Docker Run Command with Rosetta 2
+Forcing the emulator to run under x64 emulation with Docker on an M1/M2 Mac:
+```sh
+docker run --platform linux/amd64 --rm -it -p 8081:8081 -p 10250:10250 -p 10251:10251 -p 10252:10252 -p 10253:10253 -p 10254:10254 -e AZURE_COSMOS_EMULATOR_PARTITION_COUNT=2 -e AZURE_COSMOS_EMULATOR_ENABLE_DATA_PERSISTENCE=true mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator
 ```
 
-In this example, `MyController` demonstrates retrieving a feature flag value from Azure Feature Management.
+This forces Docker to use the `linux/amd64` platform, which can help resolve compatibility issues on ARM-based Macs.
 
-### 5. Actuator Health Endpoint
-
-To check the health of your application including Azure App Configuration status, access the Actuator health endpoint, usually at `/actuator/health`.
-
-That's a basic setup to integrate Azure App Configuration, Azure Feature Management, Actuator, and Kotlin with Spring Boot 3.2.3. Adjustments may be needed based on your specific requirements and environment. Replace placeholders with actual values according to your Azure setup.
+If you encounter specific error messages or issues, please provide more details for further assistance.
