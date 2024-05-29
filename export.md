@@ -1,40 +1,39 @@
-Apologies for the confusion. Let's correct the approach. Instead of relying on an external script, we'll directly embed the logic into the Docker Compose service definition using a shell one-liner. Here's how you can do it:
+To insert a Data Encryption Key (DEK) for field-level encryption in MongoDB, you typically use the `insert` command along with the `keyAltNames` field to specify the key's alternate names. Here's how you can do it:
 
-### Step-by-Step Guide
+1. **Start the MongoDB Shell**:
+   Start the MongoDB shell by running the `mongo` command in your terminal.
 
-1. **Create a Docker Compose File**:
-
-   Create a file named `docker-compose.yml` with the following content:
-
-   ```yaml
-   version: '3.8'
-
-   services:
-     random-generator:
-       image: alpine:latest
-       volumes:
-         - random-data:/data
-       command: sh -c "if [ ! -s '/data/random_string.txt' ]; then cat /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 32 > /data/random_string.txt; fi && cat /data/random_string.txt"
-
-   volumes:
-     random-data:
-   ```
-
-   In this Docker Compose file, the `random-generator` service checks if the file `/data/random_string.txt` is empty (`-s` flag) or missing. If so, it generates a new random string using `/dev/urandom`, `tr`, and `head`, and writes it to the file. Otherwise, it reads and prints the existing string.
-
-2. **Running the Setup**:
-
-   Run the Docker Compose setup:
-
+2. **Switch to the Desired Database**:
+   Switch to the database where you want to store the DEK. For example, if you want to store it in the `mydatabase` database, use the following command:
    ```bash
-   docker-compose up
+   use mydatabase
    ```
 
-   This command will generate a random string and store it in the file. If the file already contains a string, it will be reused.
+3. **Insert the DEK**:
+   Use the `insert` command to insert the DEK document into the appropriate collection. You need to specify the key material and the alternate names for the key.
 
-### Explanation
+   For example, let's say you want to insert a DEK with the key material "mykeymaterial" and the alternate names "key1" and "key2". You can do it as follows:
 
-- **Shell Command Logic**: The `sh -c` command executes the provided shell script inline. The script checks if the file `/data/random_string.txt` is empty or missing using the `-s` option of the `test` command (`[ ! -s ... ]`). If the file is empty or missing, it generates a new random string using `/dev/urandom`, `tr`, and `head`, and writes it to the file. Otherwise, it reads and prints the existing string.
-- **Docker Compose Setup**: The `random-generator` service runs the shell command inline in a container and persists the generated random string using a named volume.
+   ```javascript
+   db.createCollection("encryptionKeys")
+   db.encryptionKeys.insert({
+     "_id" : UUID("my-dek-id"), // Use a unique ID for the DEK
+     "keyMaterial" : BinData(0,"mykeymaterial"), // Use your actual key material here
+     "creationDate" : new Date(),
+     "updateDate" : new Date(),
+     "status" : "active",
+     "keyAltNames" : ["key1", "key2"] // Alternate names for the key
+   })
+   ```
 
-This approach simplifies the setup by embedding the logic directly into the Docker Compose service definition without relying on external scripts.
+   Replace `"my-dek-id"`, `"mykeymaterial"`, `"key1"`, and `"key2"` with your actual values.
+
+4. **Verify the Insertion**:
+   You can verify that the DEK has been inserted successfully by querying the collection:
+   ```javascript
+   db.encryptionKeys.find()
+   ```
+
+   This command should return the inserted DEK document.
+
+By following these steps, you can insert a Data Encryption Key (DEK) for field-level encryption in MongoDB using the MongoDB shell. Make sure to replace the placeholder values with your actual key material and key ID.
