@@ -1,52 +1,70 @@
-Running a local instance of Cosmos DB using Docker on a Mac with an M2 chip can sometimes be problematic due to architecture differences and compatibility issues. Here are some steps and troubleshooting tips that may help you get it running:
+To connect to a local instance of Key Vault, such as the `lowkey-vault` Docker container, from a Python application, you can use the `azure-keyvault-secrets` library along with a custom `DefaultAzureCredential`. Here, I'll guide you through the process of setting up the `lowkey-vault` Docker container, configuring it, and connecting to it from Python.
 
-### 1. Verify Docker Installation
-Ensure Docker is installed and running correctly on your Mac M2. You can download Docker Desktop for Mac from the official [Docker website](https://www.docker.com/products/docker-desktop/).
+### Step-by-Step Guide
 
-### 2. Use the Correct Image
-As of my knowledge cutoff in 2023, Microsoft provides a Docker image for Cosmos DB emulator, but it's tailored for x64 architecture. Macs with M1/M2 chips use ARM architecture, so you might need to use an alternative method or workaround. 
+#### Step 1: Set Up `lowkey-vault` Docker Container
 
-### 3. Pull the Cosmos DB Emulator Image
-To get the latest Cosmos DB emulator Docker image, run:
+First, you need to run the `lowkey-vault` Docker container. You can pull and run it with the following commands:
+
 ```sh
-docker pull mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator
+docker pull danielwertheim/lowkey-vault
+docker run -d --name lowkey-vault -p 7070:7070 -p 8443:8443 danielwertheim/lowkey-vault
 ```
 
-### 4. Running the Emulator with Compatibility Mode
-Since the Cosmos DB emulator is designed for x64 architecture, you'll need to run it using Docker's built-in emulation for x64:
+#### Step 2: Configure Your Python Environment
+
+You need to install the required Azure libraries if you haven't already:
+
 ```sh
-docker run --rm -it -p 8081:8081 -p 10250:10250 -p 10251:10251 -p 10252:10252 -p 10253:10253 -p 10254:10254 -e AZURE_COSMOS_EMULATOR_PARTITION_COUNT=2 -e AZURE_COSMOS_EMULATOR_ENABLE_DATA_PERSISTENCE=true mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator
+pip install azure-keyvault-secrets azure-identity
 ```
 
-### 5. Check Logs for Errors
-If the container fails to start, check the Docker logs for any errors:
-```sh
-docker logs <container_id>
+#### Step 3: Set Up Python Code to Connect to `lowkey-vault`
+
+In this step, you'll write Python code to connect to the local `lowkey-vault` instance. Since `lowkey-vault` mimics Azure Key Vault, you can use the same client libraries, but you need to adjust the credential and endpoint configurations.
+
+##### Sample Python Code
+
+Here's an example of how to configure and connect to the `lowkey-vault` instance:
+
+```python
+import os
+from azure.identity import DefaultAzureCredential
+from azure.keyvault.secrets import SecretClient
+from azure.core.pipeline.transport import RequestsTransport
+
+# Replace with your Key Vault URL
+key_vault_url = "https://localhost:8443"
+
+# Optionally disable SSL verification (not recommended for production)
+transport = RequestsTransport(connection_verify=False)
+
+# Use DefaultAzureCredential for local development
+# You might need to set environment variables for AZURE_CLIENT_ID, AZURE_TENANT_ID, and AZURE_CLIENT_SECRET if using Azure credentials
+credential = DefaultAzureCredential()
+
+# Create a SecretClient using the local Key Vault URL and the credential
+client = SecretClient(vault_url=key_vault_url, credential=credential, transport=transport)
+
+# Example: Setting and getting a secret
+secret_name = "example-secret"
+secret_value = "my-secret-value"
+
+# Set a secret
+client.set_secret(secret_name, secret_value)
+
+# Get the secret
+retrieved_secret = client.get_secret(secret_name)
+
+print(f"Secret value: {retrieved_secret.value}")
 ```
-Replace `<container_id>` with the actual container ID.
 
-### 6. Ensure Rosetta 2 is Installed
-Rosetta 2 allows Macs with Apple silicon to use apps built for a Mac with an Intel processor. You may need to install Rosetta 2 to ensure compatibility:
-```sh
-softwareupdate --install-rosetta
-```
+### Explanation
 
-### 7. Troubleshooting Common Issues
-- **Network Issues**: Ensure there are no network conflicts and that ports are available.
-- **Permissions**: Ensure Docker has the necessary permissions to run the container.
-- **Resource Limits**: Check if Docker Desktop resource settings (CPU, memory) are sufficient for running the emulator.
+1. **Docker Command**: This pulls the `lowkey-vault` Docker image and runs it, exposing it on ports 7070 and 8443.
 
-### 8. Alternatives
-If you continue to face issues, consider using an alternative approach:
-- **Remote Emulator**: Use the Cosmos DB emulator in a Windows VM or on a remote machine.
-- **Azure Free Tier**: Use the free tier of Azure Cosmos DB for development and testing instead of a local emulator.
+2. **Library Installation**: Installs the necessary Azure libraries to interact with Key Vault.
 
-### Example Docker Run Command with Rosetta 2
-Forcing the emulator to run under x64 emulation with Docker on an M1/M2 Mac:
-```sh
-docker run --platform linux/amd64 --rm -it -p 8081:8081 -p 10250:10250 -p 10251:10251 -p 10252:10252 -p 10253:10253 -p 10254:10254 -e AZURE_COSMOS_EMULATOR_PARTITION_COUNT=2 -e AZURE_COSMOS_EMULATOR_ENABLE_DATA_PERSISTENCE=true mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator
-```
+3. **Custom Transport**: Disables SSL verification in the `RequestsTransport` to allow connecting to the local `lowkey-vault` instance without SSL verification (useful for local development).
 
-This forces Docker to use the `linux/amd64` platform, which can help resolve compatibility issues on ARM-based Macs.
-
-If you encounter specific error messages or issues, please provide more details for further assistance.
+4. **DefaultAzureCredential**:
