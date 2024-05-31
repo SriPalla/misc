@@ -1,39 +1,123 @@
-To insert a Data Encryption Key (DEK) for field-level encryption in MongoDB, you typically use the `insert` command along with the `keyAltNames` field to specify the key's alternate names. Here's how you can do it:
+To achieve this in Jenkins using Groovy, you'll need to:
 
-1. **Start the MongoDB Shell**:
-   Start the MongoDB shell by running the `mongo` command in your terminal.
+1. Parse the input version (e.g., `x.x.x-x`) to extract the base version (`x.x.x`).
+2. Filter the list of tags to find those matching the base version with different suffixes (`-x`).
+3. Sort these matching tags and pick the latest one.
 
-2. **Switch to the Desired Database**:
-   Switch to the database where you want to store the DEK. For example, if you want to store it in the `mydatabase` database, use the following command:
-   ```bash
-   use mydatabase
-   ```
+Here's a step-by-step example:
 
-3. **Insert the DEK**:
-   Use the `insert` command to insert the DEK document into the appropriate collection. You need to specify the key material and the alternate names for the key.
+### Sample List of Docker Tags
 
-   For example, let's say you want to insert a DEK with the key material "mykeymaterial" and the alternate names "key1" and "key2". You can do it as follows:
+Assume you have a list of version tags in the following format:
 
-   ```javascript
-   db.createCollection("encryptionKeys")
-   db.encryptionKeys.insert({
-     "_id" : UUID("my-dek-id"), // Use a unique ID for the DEK
-     "keyMaterial" : BinData(0,"mykeymaterial"), // Use your actual key material here
-     "creationDate" : new Date(),
-     "updateDate" : new Date(),
-     "status" : "active",
-     "keyAltNames" : ["key1", "key2"] // Alternate names for the key
-   })
-   ```
+```groovy
+def tags = ["1.0.0-1", "1.0.0-2", "1.0.1-1", "1.2.0-1", "2.0.0-1", "2.1.0-1", "3.0.0-1", "1.0.0-3"]
+```
 
-   Replace `"my-dek-id"`, `"mykeymaterial"`, `"key1"`, and `"key2"` with your actual values.
+### Groovy Script to Get the Latest Version for a Given Base Version
 
-4. **Verify the Insertion**:
-   You can verify that the DEK has been inserted successfully by querying the collection:
-   ```javascript
-   db.encryptionKeys.find()
-   ```
+Here's how you can filter, sort, and find the latest version with the given base version:
 
-   This command should return the inserted DEK document.
+```groovy
+def getLatestVersionWithSuffix(List<String> tags, String baseVersion) {
+    // Define a closure to parse the suffix version
+    def parseSuffix = { version ->
+        def parts = version.split('-')
+        parts.length > 1 ? parts[1].toInteger() : 0
+    }
 
-By following these steps, you can insert a Data Encryption Key (DEK) for field-level encryption in MongoDB using the MongoDB shell. Make sure to replace the placeholder values with your actual key material and key ID.
+    // Filter tags to include only those matching the base version with suffix
+    def matchingTags = tags.findAll { it.startsWith(baseVersion) }
+
+    // Sort matching tags based on the suffix version
+    def sortedTags = matchingTags.sort { a, b ->
+        def suffixA = parseSuffix(a)
+        def suffixB = parseSuffix(b)
+        suffixA <=> suffixB
+    }
+
+    // Return the last tag in the sorted list (latest version with suffix)
+    return sortedTags ? sortedTags[-1] : null
+}
+
+// Example usage
+def tags = ["1.0.0-1", "1.0.0-2", "1.0.1-1", "1.2.0-1", "2.0.0-1", "2.1.0-1", "3.0.0-1", "1.0.0-3"]
+def baseVersion = "1.0.0"
+def latestVersionWithSuffix = getLatestVersionWithSuffix(tags, baseVersion)
+println "Latest Version with Suffix: ${latestVersionWithSuffix}"
+```
+
+### Explanation
+
+1. **Filter Matching Tags**:
+   - Use `findAll` to filter the list of tags and retain only those that start with the specified base version (`x.x.x`).
+
+2. **Parse Suffix Version**:
+   - Define a closure `parseSuffix` to extract the suffix part from the version string and convert it to an integer for sorting.
+
+3. **Sort Tags**:
+   - Use the `sort` method with a custom comparator that compares the suffix parts.
+
+4. **Get the Latest Version with Suffix**:
+   - The latest version with the suffix is the last element in the sorted list (`sortedTags[-1]`).
+
+### Using in Jenkins Pipeline
+
+You can integrate this Groovy script into a Jenkins pipeline to dynamically fetch the latest Docker tag with the given base version:
+
+```groovy
+pipeline {
+    agent any
+
+    stages {
+        stage('Get Latest Docker Tag with Suffix') {
+            steps {
+                script {
+                    // Example tags list, in real scenarios this could come from Docker CLI or registry API
+                    def tags = ["1.0.0-1", "1.0.0-2", "1.0.1-1", "1.2.0-1", "2.0.0-1", "2.1.0-1", "3.0.0-1", "1.0.0-3"]
+                    def baseVersion = "1.0.0"
+                    
+                    def latestVersionWithSuffix = getLatestVersionWithSuffix(tags, baseVersion)
+                    if (latestVersionWithSuffix) {
+                        echo "Latest Version with Suffix: ${latestVersionWithSuffix}"
+                    } else {
+                        error "No matching version tags found."
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Groovy function to get the latest version with suffix
+def getLatestVersionWithSuffix(List<String> tags, String baseVersion) {
+    def parseSuffix = { version ->
+        def parts = version.split('-')
+        parts.length > 1 ? parts[1].toInteger() : 0
+    }
+
+    def matchingTags = tags.findAll { it.startsWith(baseVersion) }
+    def sortedTags = matchingTags.sort { a, b ->
+        def suffixA = parseSuffix(a)
+        def suffixB = parseSuffix(b)
+        suffixA <=> suffixB
+    }
+    return sortedTags ? sortedTags[-1] : null
+}
+```
+
+### Explanation in Jenkins Pipeline
+
+1. **Pipeline Definition**:
+   - The `pipeline` block defines the Jenkins pipeline.
+
+2. **Stage to Get Latest Docker Tag with Suffix**:
+   - The `script` block contains the logic to process the tags and determine the latest version with the given base version and suffix.
+
+3. **Tags List**:
+   - For demonstration, the tags list is hardcoded. In real use cases, you would fetch this list from your Docker registry.
+
+4. **Invoke Function**:
+   - The `getLatestVersionWithSuffix` function is defined and invoked to determine the latest tag with the given base version.
+
+By following this approach, you can dynamically determine the latest version tag with a specific suffix from a list of Docker tags using Groovy in a Jenkins pipeline.
