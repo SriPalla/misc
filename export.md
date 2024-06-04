@@ -1,123 +1,270 @@
-To achieve this in Jenkins using Groovy, you'll need to:
+To set up a gRPC health checking service in a Spring Boot application using the `grpc-services` dependency, you need to follow these steps. This guide will help you integrate the gRPC Health Checking Protocol and ensure your gRPC service is properly monitored for liveness and readiness in a Kubernetes environment.
 
-1. Parse the input version (e.g., `x.x.x-x`) to extract the base version (`x.x.x`).
-2. Filter the list of tags to find those matching the base version with different suffixes (`-x`).
-3. Sort these matching tags and pick the latest one.
+### Step 1: Set Up Your Spring Boot Project
 
-Here's a step-by-step example:
+**Using Spring Initializr**:
+1. Go to [Spring Initializr](https://start.spring.io/).
+2. Select:
+   - Project: Maven or Gradle
+   - Language: Java
+   - Spring Boot: Latest version
+   - Dependencies: Spring Boot Actuator, Spring Data JPA (or any other database)
 
-### Sample List of Docker Tags
+**`pom.xml` dependencies**:
+```xml
+<dependencies>
+    <!-- Spring Boot dependencies -->
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-actuator</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-data-jpa</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>org.postgresql</groupId>
+        <artifactId>postgresql</artifactId>
+    </dependency>
 
-Assume you have a list of version tags in the following format:
+    <!-- gRPC dependencies -->
+    <dependency>
+        <groupId>io.grpc</groupId>
+        <artifactId>grpc-netty-shaded</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>io.grpc</groupId>
+        <artifactId>grpc-protobuf</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>io.grpc</groupId>
+        <artifactId>grpc-stub</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>com.google.protobuf</groupId>
+        <artifactId>protobuf-java</artifactId>
+    </dependency>
 
-```groovy
-def tags = ["1.0.0-1", "1.0.0-2", "1.0.1-1", "1.2.0-1", "2.0.0-1", "2.1.0-1", "3.0.0-1", "1.0.0-3"]
+    <!-- Protobuf plugin for Maven -->
+    <dependency>
+        <groupId>org.xolstice.maven.plugins</groupId>
+        <artifactId>protobuf-maven-plugin</artifactId>
+        <version>0.6.1</version>
+    </dependency>
+
+    <!-- gRPC Services for Health Checking -->
+    <dependency>
+        <groupId>io.grpc</groupId>
+        <artifactId>grpc-services</artifactId>
+    </dependency>
+</dependencies>
 ```
 
-### Groovy Script to Get the Latest Version for a Given Base Version
+### Step 2: Create a gRPC Service
 
-Here's how you can filter, sort, and find the latest version with the given base version:
+Define a gRPC service using Protocol Buffers. Create a file `src/main/proto/service.proto`:
 
-```groovy
-def getLatestVersionWithSuffix(List<String> tags, String baseVersion) {
-    // Define a closure to parse the suffix version
-    def parseSuffix = { version ->
-        def parts = version.split('-')
-        parts.length > 1 ? parts[1].toInteger() : 0
-    }
+```proto
+syntax = "proto3";
 
-    // Filter tags to include only those matching the base version with suffix
-    def matchingTags = tags.findAll { it.startsWith(baseVersion) }
+option java_multiple_files = true;
+option java_package = "com.example.grpc";
+option java_outer_classname = "ServiceProto";
 
-    // Sort matching tags based on the suffix version
-    def sortedTags = matchingTags.sort { a, b ->
-        def suffixA = parseSuffix(a)
-        def suffixB = parseSuffix(b)
-        suffixA <=> suffixB
-    }
+package service;
 
-    // Return the last tag in the sorted list (latest version with suffix)
-    return sortedTags ? sortedTags[-1] : null
+// The greeting service definition.
+service Greeter {
+  // Sends a greeting
+  rpc SayHello (HelloRequest) returns (HelloReply) {}
 }
 
-// Example usage
-def tags = ["1.0.0-1", "1.0.0-2", "1.0.1-1", "1.2.0-1", "2.0.0-1", "2.1.0-1", "3.0.0-1", "1.0.0-3"]
-def baseVersion = "1.0.0"
-def latestVersionWithSuffix = getLatestVersionWithSuffix(tags, baseVersion)
-println "Latest Version with Suffix: ${latestVersionWithSuffix}"
+// The request message containing the user's name.
+message HelloRequest {
+  string name = 1;
+}
+
+// The response message containing the greetings
+message HelloReply {
+  string message = 1;
+}
 ```
 
-### Explanation
+### Step 3: Generate Java Code from Protobuf
 
-1. **Filter Matching Tags**:
-   - Use `findAll` to filter the list of tags and retain only those that start with the specified base version (`x.x.x`).
+Use the `protobuf-maven-plugin` to generate Java code from your `.proto` file.
 
-2. **Parse Suffix Version**:
-   - Define a closure `parseSuffix` to extract the suffix part from the version string and convert it to an integer for sorting.
+**Add plugin to `pom.xml`**:
+```xml
+<build>
+    <plugins>
+        <plugin>
+            <groupId>org.xolstice.maven.plugins</groupId>
+            <artifactId>protobuf-maven-plugin</artifactId>
+            <version>0.6.1</version>
+            <configuration>
+                <protocArtifact>com.google.protobuf:protoc:3.19.1:exe:${os.detected.classifier}</protocArtifact>
+                <pluginId>grpc-java</pluginId>
+                <pluginArtifact>io.grpc:protoc-gen-grpc-java:1.41.0:exe:${os.detected.classifier}</pluginArtifact>
+            </configuration>
+            <executions>
+                <execution>
+                    <goals>
+                        <goal>compile</goal>
+                        <goal>compile-custom</goal>
+                    </goals>
+                </execution>
+            </executions>
+        </plugin>
+    </plugins>
+</build>
+```
 
-3. **Sort Tags**:
-   - Use the `sort` method with a custom comparator that compares the suffix parts.
+Run `mvn clean install` to generate the Java classes from your `.proto` file.
 
-4. **Get the Latest Version with Suffix**:
-   - The latest version with the suffix is the last element in the sorted list (`sortedTags[-1]`).
+### Step 4: Implement the gRPC Service
 
-### Using in Jenkins Pipeline
+Create a new class to implement the gRPC service.
 
-You can integrate this Groovy script into a Jenkins pipeline to dynamically fetch the latest Docker tag with the given base version:
+```java
+package com.example.grpc;
 
-```groovy
-pipeline {
-    agent any
+import io.grpc.stub.StreamObserver;
+import org.springframework.stereotype.Service;
 
-    stages {
-        stage('Get Latest Docker Tag with Suffix') {
-            steps {
-                script {
-                    // Example tags list, in real scenarios this could come from Docker CLI or registry API
-                    def tags = ["1.0.0-1", "1.0.0-2", "1.0.1-1", "1.2.0-1", "2.0.0-1", "2.1.0-1", "3.0.0-1", "1.0.0-3"]
-                    def baseVersion = "1.0.0"
-                    
-                    def latestVersionWithSuffix = getLatestVersionWithSuffix(tags, baseVersion)
-                    if (latestVersionWithSuffix) {
-                        echo "Latest Version with Suffix: ${latestVersionWithSuffix}"
-                    } else {
-                        error "No matching version tags found."
-                    }
-                }
-            }
+@Service
+public class GreeterService extends GreeterGrpc.GreeterImplBase {
+    @Override
+    public void sayHello(HelloRequest req, StreamObserver<HelloReply> responseObserver) {
+        HelloReply reply = HelloReply.newBuilder().setMessage("Hello " + req.getName()).build();
+        responseObserver.onNext(reply);
+        responseObserver.onCompleted();
+    }
+}
+```
+
+### Step 5: Implement gRPC Health Checking
+
+Create a class to handle gRPC health checking using `grpc-services`.
+
+```java
+package com.example.grpc;
+
+import io.grpc.health.v1.HealthCheckRequest;
+import io.grpc.health.v1.HealthCheckResponse;
+import io.grpc.health.v1.HealthGrpc;
+import io.grpc.protobuf.services.HealthStatusManager;
+import io.grpc.stub.StreamObserver;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Component;
+
+import javax.annotation.PostConstruct;
+
+@Component
+public class HealthService extends HealthGrpc.HealthImplBase {
+
+    private final HealthStatusManager healthStatusManager = new HealthStatusManager();
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    @PostConstruct
+    public void init() {
+        // Register initial health status
+        healthStatusManager.setStatus("", HealthCheckResponse.ServingStatus.SERVING);
+    }
+
+    @Override
+    public void check(HealthCheckRequest request, StreamObserver<HealthCheckResponse> responseObserver) {
+        try {
+            jdbcTemplate.queryForObject("SELECT 1", Integer.class);
+            healthStatusManager.setStatus("database", HealthCheckResponse.ServingStatus.SERVING);
+        } catch (Exception e) {
+            healthStatusManager.setStatus("database", HealthCheckResponse.ServingStatus.NOT_SERVING);
         }
-    }
-}
-
-// Groovy function to get the latest version with suffix
-def getLatestVersionWithSuffix(List<String> tags, String baseVersion) {
-    def parseSuffix = { version ->
-        def parts = version.split('-')
-        parts.length > 1 ? parts[1].toInteger() : 0
+        HealthCheckResponse response = healthStatusManager.check(request);
+        responseObserver.onNext(response);
+        responseObserver.onCompleted();
     }
 
-    def matchingTags = tags.findAll { it.startsWith(baseVersion) }
-    def sortedTags = matchingTags.sort { a, b ->
-        def suffixA = parseSuffix(a)
-        def suffixB = parseSuffix(b)
-        suffixA <=> suffixB
+    public HealthStatusManager getHealthStatusManager() {
+        return healthStatusManager;
     }
-    return sortedTags ? sortedTags[-1] : null
 }
 ```
 
-### Explanation in Jenkins Pipeline
+### Step 6: Configure Spring Boot Application
 
-1. **Pipeline Definition**:
-   - The `pipeline` block defines the Jenkins pipeline.
+**`application.properties`**:
+```properties
+spring.datasource.url=jdbc:postgresql://localhost:5432/mydatabase
+spring.datasource.username=myuser
+spring.datasource.password=mypassword
+spring.datasource.driver-class-name=org.postgresql.Driver
 
-2. **Stage to Get Latest Docker Tag with Suffix**:
-   - The `script` block contains the logic to process the tags and determine the latest version with the given base version and suffix.
+management.endpoints.web.exposure.include=*
+management.endpoint.health.probes.enabled=true
+management.endpoint.health.group.liveness.include=livenessState
+management.endpoint.health.group.readiness.include=readinessState
+```
 
-3. **Tags List**:
-   - For demonstration, the tags list is hardcoded. In real use cases, you would fetch this list from your Docker registry.
+### Step 7: Create Kubernetes Deployment and Service
 
-4. **Invoke Function**:
-   - The `getLatestVersionWithSuffix` function is defined and invoked to determine the latest tag with the given base version.
+**`deployment.yaml`**:
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grpc-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grpc-app
+  template:
+    metadata:
+      labels:
+        app: grpc-app
+    spec:
+      containers:
+      - name: grpc-app
+        image: my-grpc-app:latest
+        ports:
+        - containerPort: 6565
+        livenessProbe:
+          grpc:
+            port: 6565
+            service: "grpc.health.v1.Health"
+            interval: 10s
+            timeout: 5s
+            failureThreshold: 3
+        readinessProbe:
+          grpc:
+            port: 6565
+            service: "grpc.health.v1.Health"
+            interval: 10s
+            timeout: 5s
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grpc-app
+spec:
+  ports:
+  - port: 6565
+    targetPort: 6565
+  selector:
+    app: grpc-app
+```
 
-By following this approach, you can dynamically determine the latest version tag with a specific suffix from a list of Docker tags using Groovy in a Jenkins pipeline.
+### Step 8: Run Your Application
+
+Build your Docker image and push it to your registry. Deploy your application to Kubernetes with the created YAML files.
+
+This setup ensures that your gRPC service is properly health-checked by Kubernetes, both for liveness and readiness, and includes a database health check using only Spring Boot and gRPC libraries.
