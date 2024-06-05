@@ -1,74 +1,55 @@
-To read all certificates from an Azure Key Vault using its resource ID with PowerShell, you can use the Azure PowerShell module. Below are the steps and a script that demonstrates how to accomplish this:
 
-### Prerequisites
+Spring Data MongoDB's MongoTemplate doesn't offer a built-in way to set a custom timeout for specific methods. However, you can achieve this using a combination of techniques:
+1. Wrapping executeCommand:
+Create a wrapper method around mongoTemplate.executeCommand that allows you to specify a timeout:
 
-1. **Azure PowerShell Module**: Make sure you have the Azure PowerShell module installed. You can install it using the following command:
+Kotlin
 
-    ```powershell
-    Install-Module -Name Az -AllowClobber -Scope CurrentUser
-    ```
-
-2. **Authentication**: Ensure you are authenticated to your Azure account. You can authenticate using the following command:
-
-    ```powershell
-    Connect-AzAccount
-    ```
-
-### Script to Read All Certificates
-
-Here is a PowerShell script that retrieves all certificates from an Azure Key Vault using its resource ID:
-
-```powershell
-# Define the resource ID of the Key Vault
-$resourceId = "/subscriptions/<subscription-id>/resourceGroups/<resource-group-name>/providers/Microsoft.KeyVault/vaults/<key-vault-name>"
-
-# Parse the resource ID to get the Key Vault name and resource group
-$resourceIdParts = $resourceId -split "/"
-$keyVaultName = $resourceIdParts[8]
-$resourceGroupName = $resourceIdParts[4]
-
-# Get the Key Vault
-$keyVault = Get-AzKeyVault -ResourceGroupName $resourceGroupName -VaultName $keyVaultName
-
-if ($null -eq $keyVault) {
-    Write-Error "Key Vault not found."
-    exit
+private fun executeCommandWithTimeout(
+    collectionName: String,
+    command: Document,
+    timeout: Long,
+    unit: TimeUnit = TimeUnit.MILLISECONDS
+): Document {
+    val context = DefaultReactiveMongoContext(mongoClient, databaseName)
+    val operation = ReactiveMongoTemplate(context).executeCommand(collectionName, command)
+    val timeoutMono = Mono.timeout(timeout, unit)
+    return timeoutMono.flatMap { operation }
+        .onErrorResume { t ->
+            if (t is TimeoutException) {
+                Mono.error(MongoTimeoutException("Command execution timed out after $timeout ${unit.name()}"))
+            } else {
+                Mono.error(t)
+            }
+        }
+        .block()
 }
 
-# Retrieve all certificates from the Key Vault
-$certificates = Get-AzKeyVaultCertificate -VaultName $keyVaultName
 
-# Display the certificates
-foreach ($cert in $certificates) {
-    Write-Output "Certificate Name: $($cert.Name)"
-    Write-Output "Thumbprint: $($cert.Certificate.Thumbprint)"
-    Write-Output "Issuer: $($cert.Certificate.IssuerName.Name)"
-    Write-Output "Not Before: $($cert.Certificate.NotBefore)"
-    Write-Output "Expires: $($cert.Certificate.NotAfter)"
-    Write-Output "----------------------------------------"
+Explanation:
+This method takes the collection name, command document, timeout value, and optional time unit as parameters.
+It creates a ReactiveMongoTemplate instance using the underlying MongoClient and database name.
+We use ReactiveMongoTemplate.executeCommand to initiate the command execution.
+A Mono.timeout operator is used to set the timeout duration.
+The .flatMap operator chains the original operation with the timeout.
+The .onErrorResume operator catches any exceptions. If it's a TimeoutException, we throw a custom MongoTimeoutException with a clear message. Otherwise, the original exception is re-thrown.
+Finally, the block() method waits for the Mono to complete and returns the result document.
+2. Usage in Your Method:
+In your specific method where you want the custom timeout, use the wrapper method:
+
+Kotlin
+
+fun someMethodWithTimeout(collectionName: String, command: Document) {
+    val result = executeCommandWithTimeout(collectionName, command, 1000, TimeUnit.MILLISECONDS)
+    // Process the result document
 }
-```
 
-### Explanation of the Script
 
-1. **Resource ID**: The script starts by defining the resource ID of the Key Vault. Replace `<subscription-id>`, `<resource-group-name>`, and `<key-vault-name>` with your actual values.
-
-2. **Parse the Resource ID**: The resource ID is parsed to extract the Key Vault name and resource group name.
-
-3. **Get the Key Vault**: The script uses `Get-AzKeyVault` to get the Key Vault based on the extracted name and resource group.
-
-4. **Retrieve Certificates**: The script retrieves all certificates in the Key Vault using `Get-AzKeyVaultCertificate`.
-
-5. **Display Certificates**: Finally, the script iterates over the retrieved certificates and displays information about each certificate, including the name, thumbprint, issuer, and validity period.
-
-### Running the Script
-
-1. Save the script to a file, for example, `Get-KeyVaultCertificates.ps1`.
-2. Open a PowerShell window and navigate to the directory where the script is saved.
-3. Run the script:
-
-    ```powershell
-    .\Get-KeyVaultCertificates.ps1
-    ```
-
-This script will output the details of all certificates stored in the specified Azure Key Vault.
+Explanation:
+This method calls the executeCommandWithTimeout wrapper, specifying the collection name, command document, and desired timeout (1 second in this example).
+The result document is then processed further.
+Important Considerations:
+This approach utilizes the reactive counterpart (ReactiveMongoTemplate) to achieve timeouts. You might need to adjust your code depending on whether you're using the reactive or blocking API.
+Ensure proper error handling in your application code to catch the custom MongoTimeoutException thrown by the wrapper method.
+Consider using connection pooling with Spring Boot's auto-configured MongoClient for improved performance and resource management.
+This approach allows you to set custom timeouts for specific methods that use executeCommand in your Spring Boot application. Remember to adapt the timeout value and error handling logic based on your specific requirements.
