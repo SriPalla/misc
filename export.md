@@ -1,4 +1,4 @@
-To set up a single instance MongoDB replica set in Docker and avoid the "namespace not found" error, you need to ensure that the replica set is properly initiated and that the `local.oplog.rs` collection is created. Here’s a step-by-step guide to help you achieve this:
+To use Spring Data transactions with MongoDB, MongoDB must be configured as a replica set because transactions are only supported on replica sets. However, setting up a local MongoDB replica set using Docker can sometimes be tricky due to initialization timing issues. Here's an enhanced approach to ensure the replica set is properly initiated and the Spring Data transactions work correctly.
 
 ### Step-by-Step Guide
 
@@ -31,24 +31,34 @@ Create a script named `initiateReplicaSet.sh` in the same directory as your `doc
 
 ```sh
 #!/bin/bash
+# Wait for MongoDB to start
 echo "Waiting for MongoDB to start..."
-until mongo --eval "print(\"waited for connection\")"
+until mongo --host localhost --eval "print(\"waited for connection\")"
 do
     sleep 5
 done
 
+# Initiate the replica set
 echo "Initiating replica set..."
-mongo --eval "
-  rs.initiate(
-    {
-      _id: 'rs0',
-      version: 1,
-      members: [
-        { _id: 0, host: 'localhost:27017' }
-      ]
-    }
-  )
-"
+mongo --host localhost <<EOF
+rs.initiate(
+  {
+    _id: "rs0",
+    version: 1,
+    members: [
+      { _id: 0, host: "localhost:27017" }
+    ]
+  }
+)
+EOF
+
+# Wait until the replica set is initiated and a primary is elected
+until mongo --host localhost --eval "rs.status().members[0].stateStr" | grep PRIMARY
+do
+    sleep 5
+done
+
+echo "Replica set initiated and primary elected."
 ```
 
 Make sure the script is executable:
@@ -68,11 +78,10 @@ docker-compose up -d
 ### Explanation
 
 - **Docker Compose File**: Defines a single MongoDB service running on port 27017. The initialization script is copied into the container and executed on startup.
-- **Initialization Script**: The script waits for MongoDB to start and then initiates the replica set.
-
-### Troubleshooting
-
-If you encounter the "namespace not found" error, it may be because the replica set was not properly initiated or the oplog was not created. The initialization script provided should handle this by ensuring that the replica set is properly initiated.
+- **Initialization Script**: 
+  - Waits for MongoDB to start.
+  - Initiates the replica set.
+  - Waits until the replica set is fully initiated and a primary is elected.
 
 ### Connecting to the Single Instance Replica Set from Spring Boot
 
@@ -95,4 +104,10 @@ spring:
 
 Replace `yourDatabaseName` with the name of your database.
 
-This setup should provide a single instance MongoDB replica set running in Docker, properly initiated to avoid the "namespace not found" error, and configured to connect to your Spring Boot application.
+### Additional Notes
+
+- Ensure your Docker setup allows for the necessary network communication.
+- The script includes a waiting mechanism to confirm that a primary has been elected, which should prevent the "timeout while waiting for a server that matches" error.
+- If you still face issues, consider adding a retry mechanism or increasing the sleep duration to ensure that MongoDB has enough time to start up and initiate the replica set properly.
+
+This setup should ensure that the MongoDB instance is fully ready and the replica set is properly initiated before any connections are attempted, allowing Spring Data transactions to work correctly.
