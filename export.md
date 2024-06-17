@@ -1,99 +1,98 @@
-Azure Cosmos DB supports multiple APIs for different data models, including the SQL API (for NoSQL), MongoDB API, Cassandra API, Gremlin API, and Table API. Each API is designed to provide compatibility with different database technologies. Here, we'll focus on the differences between Cosmos DB for NoSQL (using the SQL API) and Cosmos DB for MongoDB (using the MongoDB API).
+To set up a single instance MongoDB replica set in Docker and avoid the "namespace not found" error, you need to ensure that the replica set is properly initiated and that the `local.oplog.rs` collection is created. Here’s a step-by-step guide to help you achieve this:
 
-### Cosmos DB for NoSQL (SQL API)
+### Step-by-Step Guide
 
-#### Features:
-1. **Query Language**:
-   - Uses a SQL-like query language specifically designed for Cosmos DB.
-   - Supports rich querying capabilities including JOINs, aggregations, and user-defined functions.
+#### 1. Create the Docker Compose File
 
-2. **Data Model**:
-   - Document-based, storing JSON documents.
-   - Supports flexible schema and hierarchical data structures.
+Create a `docker-compose.yml` file to define the MongoDB service.
 
-3. **Indexing**:
-   - Automatic indexing of all properties by default, with options for manual indexing policies.
-   - Supports custom indexing policies for better performance optimization.
+```yaml
+version: '3.8'
+services:
+  mongo:
+    image: mongo:4.4.3
+    container_name: mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+      - ./initiateReplicaSet.sh:/docker-entrypoint-initdb.d/initiateReplicaSet.sh
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=root
+      - MONGO_INITDB_ROOT_PASSWORD=example
 
-4. **Consistency Levels**:
-   - Provides five consistency levels: Strong, Bounded Staleness, Session, Consistent Prefix, and Eventual.
+volumes:
+  mongo-data:
+```
 
-5. **Integration and SDKs**:
-   - Natively supported by Azure SDKs for various programming languages (Java, .NET, Python, Node.js, etc.).
-   - Full support for Azure features like Azure Functions, Logic Apps, and Data Factory.
+#### 2. Create the Initialization Script
 
-6. **Unique Key Constraints**:
-   - Allows unique key constraints to enforce uniqueness on one or more fields within a logical partition.
+Create a script named `initiateReplicaSet.sh` in the same directory as your `docker-compose.yml` file. This script will initiate the replica set.
 
-#### Use Cases:
-- Applications requiring advanced querying capabilities and integration with other Azure services.
-- Scenarios where flexible schema and hierarchical data models are beneficial.
-- Workloads that benefit from rich indexing and custom indexing policies.
+```sh
+#!/bin/bash
+echo "Waiting for MongoDB to start..."
+until mongo --eval "print(\"waited for connection\")"
+do
+    sleep 5
+done
 
-### Cosmos DB for MongoDB (MongoDB API)
+echo "Initiating replica set..."
+mongo --eval "
+  rs.initiate(
+    {
+      _id: 'rs0',
+      version: 1,
+      members: [
+        { _id: 0, host: 'localhost:27017' }
+      ]
+    }
+  )
+"
+```
 
-#### Features:
-1. **Query Language**:
-   - Uses MongoDB query language, providing compatibility with MongoDB clients and tools.
-   - Supports MongoDB CRUD operations and aggregation framework.
+Make sure the script is executable:
 
-2. **Data Model**:
-   - Document-based, storing BSON (Binary JSON) documents.
-   - Compatible with existing MongoDB applications with minimal changes.
+```sh
+chmod +x initiateReplicaSet.sh
+```
 
-3. **Indexing**:
-   - Supports MongoDB indexing capabilities, including compound indexes, text indexes, and geospatial indexes.
-   - Automatic indexing of the `_id` field and manual creation of additional indexes as needed.
+#### 3. Build and Run the Docker Containers
 
-4. **Consistency Levels**:
-   - Supports MongoDB's default consistency model (eventual consistency).
-   - Can be configured to use Cosmos DB's consistency levels for specific operations.
+Run the following command in the directory containing your `docker-compose.yml` and `initiateReplicaSet.sh` files:
 
-5. **Integration and SDKs**:
-   - Compatible with MongoDB drivers and tools (e.g., MongoDB shell, MongoDB Compass, Mongoose).
-   - Enables existing MongoDB applications to migrate to Cosmos DB with minimal code changes.
+```sh
+docker-compose up -d
+```
 
-6. **Unique Key Constraints**:
-   - Supports unique indexes to enforce uniqueness on one or more fields.
+### Explanation
 
-#### Use Cases:
-- Existing MongoDB applications looking to migrate to a globally distributed database with minimal changes.
-- Applications requiring compatibility with MongoDB tools and drivers.
-- Scenarios where MongoDB's query language and data model are preferred.
+- **Docker Compose File**: Defines a single MongoDB service running on port 27017. The initialization script is copied into the container and executed on startup.
+- **Initialization Script**: The script waits for MongoDB to start and then initiates the replica set.
 
-### Key Differences
+### Troubleshooting
 
-1. **API and Query Language**:
-   - **NoSQL (SQL API)**: Uses a SQL-like query language specific to Cosmos DB.
-   - **MongoDB API**: Uses MongoDB's query language, providing compatibility with MongoDB tools and drivers.
+If you encounter the "namespace not found" error, it may be because the replica set was not properly initiated or the oplog was not created. The initialization script provided should handle this by ensuring that the replica set is properly initiated.
 
-2. **Indexing**:
-   - **NoSQL (SQL API)**: Automatic indexing of all properties, with custom indexing policies.
-   - **MongoDB API**: Supports MongoDB indexing strategies, with manual index creation.
+### Connecting to the Single Instance Replica Set from Spring Boot
 
-3. **Consistency Levels**:
-   - **NoSQL (SQL API)**: Offers five consistency levels.
-   - **MongoDB API**: Default MongoDB consistency with optional Cosmos DB consistency levels.
+Update your `application.properties` or `application.yml` to use the MongoDB replica set:
 
-4. **Integration**:
-   - **NoSQL (SQL API)**: Deep integration with Azure services and SDKs.
-   - **MongoDB API**: Compatibility with MongoDB ecosystem, including drivers and tools.
+**application.properties**:
 
-5. **Unique Key Constraints**:
-   - Both APIs support unique key constraints, but they are defined and managed differently.
+```properties
+spring.data.mongodb.uri=mongodb://root:example@localhost:27017/yourDatabaseName?replicaSet=rs0&retryWrites=false
+```
 
-### Choosing Between Cosmos DB for NoSQL and MongoDB
+**application.yml**:
 
-- **Use Cosmos DB for NoSQL (SQL API) if**:
-  - You need advanced querying capabilities with a SQL-like language.
-  - Your application benefits from tight integration with Azure services.
-  - You require flexible consistency levels and rich indexing options.
+```yaml
+spring:
+  data:
+    mongodb:
+      uri: mongodb://root:example@localhost:27017/yourDatabaseName?replicaSet=rs0&retryWrites=false
+```
 
-- **Use Cosmos DB for MongoDB (MongoDB API) if**:
-  - You are migrating an existing MongoDB application and want to minimize code changes.
-  - You prefer MongoDB's query language and data model.
-  - Your application relies on MongoDB tools and drivers.
+Replace `yourDatabaseName` with the name of your database.
 
-### Conclusion
-
-Both Cosmos DB for NoSQL and Cosmos DB for MongoDB offer robust, globally distributed database solutions with unique features tailored to different needs. Your choice should depend on your application's requirements, existing technology stack, and specific use cases.
+This setup should provide a single instance MongoDB replica set running in Docker, properly initiated to avoid the "namespace not found" error, and configured to connect to your Spring Boot application.
