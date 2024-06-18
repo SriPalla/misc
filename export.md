@@ -1,16 +1,45 @@
-To define a health check for the `mongodb/mongodb-atlas-local` Docker image in a Docker Compose file, you can use the `healthcheck` instruction. The health check typically involves running a command that verifies the MongoDB server is responsive. Here's how you can set it up:
+If the `mongodb/mongodb-atlas-local` Docker image does not include the `mongo` or `mongosh` shell, you can create a custom Docker image that adds the MongoDB shell. Here’s how you can build such an image and use it in your Docker Compose setup.
 
-### Example Docker Compose File with Health Check
+### Creating a Custom Docker Image
 
-Assuming you have a directory structure like this:
+1. **Dockerfile**
 
+Create a `Dockerfile` that extends the `mongodb/mongodb-atlas-local` image and adds the MongoDB shell:
+
+```Dockerfile
+# Dockerfile
+FROM mongodb/mongodb-atlas-local:latest
+
+# Install the MongoDB shell
+RUN apt-get update && apt-get install -y mongo-tools
+
+# Clean up to reduce image size
+RUN apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Copy initialization scripts
+COPY init-mongo.js /docker-entrypoint-initdb.d/init-mongo.js
+COPY initiateReplicaSet.js /docker-entrypoint-initdb.d/initiateReplicaSet.js
+
+# Set the entrypoint
+ENTRYPOINT ["/bin/bash", "-c", "mongod --replSet rs0 --bind_ip_all --auth && sleep 5 && mongo --host localhost:27017 -u root -p example --authenticationDatabase admin /docker-entrypoint-initdb.d/initiateReplicaSet.js && mongo --host localhost:27017 -u root -p example --authenticationDatabase admin /docker-entrypoint-initdb.d/init-mongo.js"]
 ```
-project-root/
-  |- docker-compose.yml
-  |- init-mongo.js
-```
 
-### 1. Initialization Script
+2. **Initialization Scripts**
+
+Ensure you have your initialization scripts ready:
+
+**initiateReplicaSet.js**:
+
+```js
+// initiateReplicaSet.js
+rs.initiate({
+  _id: "rs0",
+  members: [
+    { _id: 0, host: "localhost:27017" }
+  ]
+});
+print("Replica set initiated.");
+```
 
 **init-mongo.js**:
 
@@ -21,15 +50,23 @@ db.createCollection("customers");
 print("Customer database and collection created.");
 ```
 
-### 2. Docker Compose File
+3. **Build the Custom Image**
 
-Create or update your `docker-compose.yml` file to include the health check for the `mongodb/mongodb-atlas-local` image.
+Build the Docker image from the `Dockerfile`:
+
+```sh
+docker build -t custom-mongodb-atlas-local .
+```
+
+### Docker Compose File
+
+Update your `docker-compose.yml` file to use the custom image and include a health check:
 
 ```yaml
 version: '3.8'
 services:
   mongodb:
-    image: mongodb/mongodb-atlas-local:latest
+    image: custom-mongodb-atlas-local
     container_name: mongodb
     ports:
       - "27017:27017"
@@ -38,26 +75,15 @@ services:
       - MONGO_INITDB_ROOT_PASSWORD=example
     volumes:
       - mongo-data:/data/db
-      - ./init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js
     healthcheck:
-      test: ["CMD-SHELL", "mongosh --eval 'db.adminCommand(\"ping\")' || exit 1"]
+      test: ["CMD-SHELL", "mongo --eval 'db.adminCommand(\"ping\")' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
-    entrypoint: ["/bin/bash", "-c", "mongod --bind_ip_all --auth && sleep 5 && mongosh --host localhost:27017 -u root -p example --authenticationDatabase admin /docker-entrypoint-initdb.d/init-mongo.js"]
 
 volumes:
   mongo-data:
 ```
-
-### Explanation
-
-- **MongoDB Service (`mongodb`)**:
-  - Uses the `mongodb/mongodb-atlas-local` image.
-  - Sets environment variables for the MongoDB root user.
-  - Mounts the initialization script from the host to the container.
-  - Defines a health check that runs a `ping` command to the MongoDB server every 10 seconds, with a timeout of 5 seconds and retries up to 5 times.
-  - Uses `entrypoint` to start the MongoDB server, waits a few seconds for the server to initialize, and then runs the initialization script (`init-mongo.js`).
 
 ### Running the Containers
 
@@ -67,16 +93,14 @@ To start the containers and apply the health check, use:
 docker-compose up -d
 ```
 
-### Health Check Details
+### Explanation
 
-- **Test Command**: `mongosh --eval 'db.adminCommand("ping")' || exit 1` - This command checks if the MongoDB server is responsive by issuing a `ping` command.
-- **Interval**: Runs the health check every 10 seconds.
-- **Timeout**: Each health check must complete within 5 seconds.
-- **Retries**: The container will be considered unhealthy after 5 consecutive failures.
+- **Custom Docker Image**:
+  - Extends `mongodb/mongodb-atlas-local` and installs the `mongo` tools.
+  - Copies the initialization scripts into the container.
+  - Sets up the entrypoint to start MongoDB, initialize the replica set, and run the initialization script.
 
-### Notes
+- **Health Check**:
+  - Uses the `mongo` shell to ping the MongoDB server every 10 seconds, with a timeout of 5 seconds and retries up to 5 times.
 
-- **Initialization Script**: The script `init-mongo.js` will run after MongoDB starts, creating the `customer` database and `customers` collection.
-- **Customizing Health Check**: Adjust the health check parameters (`interval`, `timeout`, `retries`) as needed for your specific use case.
-
-This setup ensures that your MongoDB instance using the `mongodb-atlas-local` image is properly initialized and health-checked, making it suitable for local development and testing environments.
+This setup ensures that you have a working MongoDB instance with the necessary client tools for initialization and health checks, making it suitable for local development and testing environments.
