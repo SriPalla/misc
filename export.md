@@ -1,142 +1,115 @@
-Running a MongoDB replica set on Docker Desktop for Apple Silicon (M1 or M2) requires configuring your Docker Compose setup properly. Here’s a step-by-step guide to ensure your MongoDB replica set works smoothly for local development:
+Yes, you can pass a JavaScript file to the MongoDB shell (`mongosh` or `mongo`) and execute it. This is particularly useful for running scripts that contain multiple commands or more complex logic.
 
-### Step-by-Step Guide
+Here’s how you can do it:
 
-#### 1. Create the Docker Compose File
+### Using a JavaScript File with `mongosh`
 
-Create a `docker-compose.yml` file to define the MongoDB services. This example will set up a three-node replica set.
+1. **Create the JavaScript File**
+
+Create a JavaScript file, for example, `initiateReplicaSet.js`, with the commands you want to run:
+
+```js
+// initiateReplicaSet.js
+rs.initiate({
+  _id: "rs0",
+  members: [
+    { _id: 0, host: "localhost:27017" }
+  ]
+});
+
+var primaryElected = false;
+while (!primaryElected) {
+  var status = rs.status();
+  status.members.forEach(member => {
+    if (member.stateStr === "PRIMARY") {
+      primaryElected = true;
+    }
+  });
+  sleep(1000);
+}
+
+print("Primary elected, creating customer database...");
+
+db = db.getSiblingDB("customer");
+db.createCollection("customers");
+print("Customer database and collection created.");
+```
+
+2. **Run the Script Using `mongosh`**
+
+You can pass this JavaScript file to the `mongosh` using the `--file` option:
+
+```sh
+mongosh --host <hostname>:<port> -u <username> -p <password> --authenticationDatabase <auth-db> /path/to/initiateReplicaSet.js
+```
+
+Replace `<hostname>`, `<port>`, `<username>`, `<password>`, `<auth-db>`, and `/path/to/initiateReplicaSet.js` with your actual MongoDB server details, authentication credentials, and the path to your JavaScript file.
+
+### Example with Docker Compose
+
+To run this script automatically when starting a Docker container, you can use a `docker-compose.yml` file. Here's how you can set it up:
+
+1. **Directory Structure**
+
+Assume you have the following directory structure:
+
+```
+project-root/
+  |- docker-compose.yml
+  |- initiateReplicaSet.js
+```
+
+2. **Docker Compose File**
+
+Create or update your `docker-compose.yml` file to include a service that runs the MongoDB client and executes the JavaScript file:
 
 ```yaml
 version: '3.8'
 services:
-  mongo1:
+  mongodb:
     image: mongo:5.0.5
-    container_name: mongo1
+    container_name: mongodb
     ports:
       - "27017:27017"
-    volumes:
-      - mongo1-data:/data/db
-      - ./initiateReplicaSet.sh:/docker-entrypoint-initdb.d/initiateReplicaSet.sh
     environment:
-      - MONGO_INITDB_ROOT_USERNAME=root
-      - MONGO_INITDB_ROOT_PASSWORD=example
-    command: ["mongod", "--replSet", "rs0"]
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: example
+    volumes:
+      - mongo-data:/data/db
 
-  mongo2:
+  mongo-client:
     image: mongo:5.0.5
-    container_name: mongo2
-    ports:
-      - "27018:27017"
+    container_name: mongo-client
+    depends_on:
+      - mongodb
     volumes:
-      - mongo2-data:/data/db
-    environment:
-      - MONGO_INITDB_ROOT_USERNAME=root
-      - MONGO_INITDB_ROOT_PASSWORD=example
-    command: ["mongod", "--replSet", "rs0"]
-
-  mongo3:
-    image: mongo:5.0.5
-    container_name: mongo3
-    ports:
-      - "27019:27017"
-    volumes:
-      - mongo3-data:/data/db
-    environment:
-      - MONGO_INITDB_ROOT_USERNAME=root
-      - MONGO_INITDB_ROOT_PASSWORD=example
-    command: ["mongod", "--replSet", "rs0"]
+      - ./initiateReplicaSet.js:/docker-entrypoint-initdb.d/initiateReplicaSet.js
+    entrypoint: ["mongosh", "--host", "mongodb", "--port", "27017", "-u", "root", "-p", "example", "--authenticationDatabase", "admin", "/docker-entrypoint-initdb.d/initiateReplicaSet.js"]
 
 volumes:
-  mongo1-data:
-  mongo2-data:
-  mongo3-data:
+  mongo-data:
 ```
 
-#### 2. Create the Initialization Script
+### Explanation
 
-Create a script named `initiateReplicaSet.sh` in the same directory as your `docker-compose.yml` file. This script will initiate the replica set.
+- **MongoDB Service (`mongodb`)**: This service runs the MongoDB server.
+- **MongoDB Client Service (`mongo-client`)**:
+  - Uses the official `mongo` image.
+  - Mounts the `initiateReplicaSet.js` script from the host to the container.
+  - Uses the `entrypoint` to run `mongosh` with the script.
 
-```sh
-#!/bin/bash
-# Wait for MongoDB to start
-echo "Waiting for MongoDB to start..."
-until mongo --host mongo1:27017 --eval "print(\"waited for connection\")"
-do
-    sleep 5
-done
+### Running the Containers
 
-# Initiate the replica set
-echo "Initiating replica set..."
-mongo --host mongo1:27017 <<EOF
-rs.initiate(
-  {
-    _id: "rs0",
-    members: [
-      { _id: 0, host: "mongo1:27017" },
-      { _id: 1, host: "mongo2:27017" },
-      { _id: 2, host: "mongo3:27017" }
-    ]
-  }
-)
-EOF
-
-# Wait until the replica set is initiated and a primary is elected
-until mongo --host mongo1:27017 --eval "rs.status().members[0].stateStr" | grep PRIMARY
-do
-    sleep 5
-done
-
-echo "Replica set initiated and primary elected."
-```
-
-Make sure the script is executable:
-
-```sh
-chmod +x initiateReplicaSet.sh
-```
-
-#### 3. Build and Run the Docker Containers
-
-Run the following command in the directory containing your `docker-compose.yml` and `initiateReplicaSet.sh` files:
+To start the containers and run the initialization script, use:
 
 ```sh
 docker-compose up -d
 ```
 
-#### 4. Verify the Replica Set
+This command starts the MongoDB server and then runs the `mongosh` client to execute the `initiateReplicaSet.js` script.
 
-After starting the containers, verify the replica set status. You can connect to the MongoDB shell of `mongo1` and check the replica set status:
+### Final Notes
 
-```sh
-docker exec -it mongo1 mongo --eval "rs.status()"
-```
-
-### Connecting to the Replica Set from Spring Boot
-
-Update your `application.properties` or `application.yml` to use the MongoDB replica set:
-
-**application.properties**:
-
-```properties
-spring.data.mongodb.uri=mongodb://root:example@mongo1:27017,mongo2:27017,mongo3:27017/yourDatabaseName?replicaSet=rs0&retryWrites=false
-```
-
-**application.yml**:
-
-```yaml
-spring:
-  data:
-    mongodb:
-      uri: mongodb://root:example@mongo1:27017,mongo2:27017,mongo3:27017/yourDatabaseName?replicaSet=rs0&retryWrites=false
-```
-
-Replace `yourDatabaseName` with the name of your database.
-
-### Additional Notes
-
-- **Compatibility**: The `mongo` image should be compatible with Apple Silicon. If you encounter any issues, try using a more recent version of MongoDB that supports ARM architecture.
-- **Network Configuration**: Ensure that your Docker setup allows for the necessary network communication between containers.
-- **Initialization Timing**: The script includes a waiting mechanism to confirm that a primary has been elected, which should prevent the "timeout while waiting for a server that matches" error.
-- **Ports**: Adjust the ports if necessary to avoid conflicts with other services running on your machine.
-
-This setup should provide a MongoDB replica set running in Docker on your Apple Silicon MacBook, ready for local development with Spring Data transactions.
+- Ensure the JavaScript file (`initiateReplicaSet.js`) has the correct commands and logic you need to initialize your MongoDB setup.
+- Adjust the MongoDB server details and authentication credentials as needed.
+- This approach is useful for setting up MongoDB environments automatically using Docker and Docker Compose.
