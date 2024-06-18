@@ -1,10 +1,10 @@
-To use Spring Data transactions with MongoDB, MongoDB must be configured as a replica set because transactions are only supported on replica sets. However, setting up a local MongoDB replica set using Docker can sometimes be tricky due to initialization timing issues. Here's an enhanced approach to ensure the replica set is properly initiated and the Spring Data transactions work correctly.
+To resolve the error "Transaction numbers are only allowed on a replica set member or mongos," you need to ensure that your MongoDB instance is running as a replica set. Given that you are on a MacBook M3 and using Docker, here's a refined approach to set up a MongoDB replica set using Docker Compose:
 
 ### Step-by-Step Guide
 
 #### 1. Create the Docker Compose File
 
-Create a `docker-compose.yml` file to define the MongoDB service.
+Create a `docker-compose.yml` file to define the MongoDB service. Ensure that the MongoDB service is configured to run as a replica set.
 
 ```yaml
 version: '3.8'
@@ -20,6 +20,7 @@ services:
     environment:
       - MONGO_INITDB_ROOT_USERNAME=root
       - MONGO_INITDB_ROOT_PASSWORD=example
+      - MONGO_INITDB_DATABASE=admin
 
 volumes:
   mongo-data:
@@ -106,8 +107,7 @@ Replace `yourDatabaseName` with the name of your database.
 
 ### Additional Notes
 
-- Ensure your Docker setup allows for the necessary network communication.
-- The script includes a waiting mechanism to confirm that a primary has been elected, which should prevent the "timeout while waiting for a server that matches" error.
-- If you still face issues, consider adding a retry mechanism or increasing the sleep duration to ensure that MongoDB has enough time to start up and initiate the replica set properly.
+- **Network Configuration**: Ensure that your Docker setup allows for the necessary network communication.
+- **Retry Mechanism**: If you still face issues, consider adding a retry mechanism or increasing the sleep duration in the script to ensure that MongoDB has enough time to start up and initiate the replica set properly.
 
 This setup should ensure that the MongoDB instance is fully ready and the replica set is properly initiated before any connections are attempted, allowing Spring Data transactions to work correctly.
