@@ -1,90 +1,50 @@
-Yes, you can pass a JavaScript file to the MongoDB shell (`mongosh` or `mongo`) and execute it. This is particularly useful for running scripts that contain multiple commands or more complex logic.
+To define a health check for the `mongodb/mongodb-atlas-local` Docker image in a Docker Compose file, you can use the `healthcheck` instruction. The health check typically involves running a command that verifies the MongoDB server is responsive. Here's how you can set it up:
 
-Here’s how you can do it:
+### Example Docker Compose File with Health Check
 
-### Using a JavaScript File with `mongosh`
+Assuming you have a directory structure like this:
 
-1. **Create the JavaScript File**
+```
+project-root/
+  |- docker-compose.yml
+  |- init-mongo.js
+```
 
-Create a JavaScript file, for example, `initiateReplicaSet.js`, with the commands you want to run:
+### 1. Initialization Script
+
+**init-mongo.js**:
 
 ```js
-// initiateReplicaSet.js
-rs.initiate({
-  _id: "rs0",
-  members: [
-    { _id: 0, host: "localhost:27017" }
-  ]
-});
-
-var primaryElected = false;
-while (!primaryElected) {
-  var status = rs.status();
-  status.members.forEach(member => {
-    if (member.stateStr === "PRIMARY") {
-      primaryElected = true;
-    }
-  });
-  sleep(1000);
-}
-
-print("Primary elected, creating customer database...");
-
+// init-mongo.js
 db = db.getSiblingDB("customer");
 db.createCollection("customers");
 print("Customer database and collection created.");
 ```
 
-2. **Run the Script Using `mongosh`**
+### 2. Docker Compose File
 
-You can pass this JavaScript file to the `mongosh` using the `--file` option:
-
-```sh
-mongosh --host <hostname>:<port> -u <username> -p <password> --authenticationDatabase <auth-db> /path/to/initiateReplicaSet.js
-```
-
-Replace `<hostname>`, `<port>`, `<username>`, `<password>`, `<auth-db>`, and `/path/to/initiateReplicaSet.js` with your actual MongoDB server details, authentication credentials, and the path to your JavaScript file.
-
-### Example with Docker Compose
-
-To run this script automatically when starting a Docker container, you can use a `docker-compose.yml` file. Here's how you can set it up:
-
-1. **Directory Structure**
-
-Assume you have the following directory structure:
-
-```
-project-root/
-  |- docker-compose.yml
-  |- initiateReplicaSet.js
-```
-
-2. **Docker Compose File**
-
-Create or update your `docker-compose.yml` file to include a service that runs the MongoDB client and executes the JavaScript file:
+Create or update your `docker-compose.yml` file to include the health check for the `mongodb/mongodb-atlas-local` image.
 
 ```yaml
 version: '3.8'
 services:
   mongodb:
-    image: mongo:5.0.5
+    image: mongodb/mongodb-atlas-local:latest
     container_name: mongodb
     ports:
       - "27017:27017"
     environment:
-      MONGO_INITDB_ROOT_USERNAME: root
-      MONGO_INITDB_ROOT_PASSWORD: example
+      - MONGO_INITDB_ROOT_USERNAME=root
+      - MONGO_INITDB_ROOT_PASSWORD=example
     volumes:
       - mongo-data:/data/db
-
-  mongo-client:
-    image: mongo:5.0.5
-    container_name: mongo-client
-    depends_on:
-      - mongodb
-    volumes:
-      - ./initiateReplicaSet.js:/docker-entrypoint-initdb.d/initiateReplicaSet.js
-    entrypoint: ["mongosh", "--host", "mongodb", "--port", "27017", "-u", "root", "-p", "example", "--authenticationDatabase", "admin", "/docker-entrypoint-initdb.d/initiateReplicaSet.js"]
+      - ./init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --eval 'db.adminCommand(\"ping\")' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    entrypoint: ["/bin/bash", "-c", "mongod --bind_ip_all --auth && sleep 5 && mongosh --host localhost:27017 -u root -p example --authenticationDatabase admin /docker-entrypoint-initdb.d/init-mongo.js"]
 
 volumes:
   mongo-data:
@@ -92,24 +52,31 @@ volumes:
 
 ### Explanation
 
-- **MongoDB Service (`mongodb`)**: This service runs the MongoDB server.
-- **MongoDB Client Service (`mongo-client`)**:
-  - Uses the official `mongo` image.
-  - Mounts the `initiateReplicaSet.js` script from the host to the container.
-  - Uses the `entrypoint` to run `mongosh` with the script.
+- **MongoDB Service (`mongodb`)**:
+  - Uses the `mongodb/mongodb-atlas-local` image.
+  - Sets environment variables for the MongoDB root user.
+  - Mounts the initialization script from the host to the container.
+  - Defines a health check that runs a `ping` command to the MongoDB server every 10 seconds, with a timeout of 5 seconds and retries up to 5 times.
+  - Uses `entrypoint` to start the MongoDB server, waits a few seconds for the server to initialize, and then runs the initialization script (`init-mongo.js`).
 
 ### Running the Containers
 
-To start the containers and run the initialization script, use:
+To start the containers and apply the health check, use:
 
 ```sh
 docker-compose up -d
 ```
 
-This command starts the MongoDB server and then runs the `mongosh` client to execute the `initiateReplicaSet.js` script.
+### Health Check Details
 
-### Final Notes
+- **Test Command**: `mongosh --eval 'db.adminCommand("ping")' || exit 1` - This command checks if the MongoDB server is responsive by issuing a `ping` command.
+- **Interval**: Runs the health check every 10 seconds.
+- **Timeout**: Each health check must complete within 5 seconds.
+- **Retries**: The container will be considered unhealthy after 5 consecutive failures.
 
-- Ensure the JavaScript file (`initiateReplicaSet.js`) has the correct commands and logic you need to initialize your MongoDB setup.
-- Adjust the MongoDB server details and authentication credentials as needed.
-- This approach is useful for setting up MongoDB environments automatically using Docker and Docker Compose.
+### Notes
+
+- **Initialization Script**: The script `init-mongo.js` will run after MongoDB starts, creating the `customer` database and `customers` collection.
+- **Customizing Health Check**: Adjust the health check parameters (`interval`, `timeout`, `retries`) as needed for your specific use case.
+
+This setup ensures that your MongoDB instance using the `mongodb-atlas-local` image is properly initialized and health-checked, making it suitable for local development and testing environments.
