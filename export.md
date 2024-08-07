@@ -1,104 +1,95 @@
-To implement an Azure Timer Trigger for a change stream listener in MongoDB using Azure Functions and storing the resume token in a lease collection, you need to ensure that your function can resume from where it left off in case of any interruptions. This approach involves using a lease collection to store the resume tokens, which will help in handling overlapping executions and ensuring idempotent processing.
+Pushing database change events directly to Google Cloud Pub/Sub from a microservice deployed in a Kubernetes cluster involves using asynchronous communication to notify other systems or services about changes. This approach can be useful for decoupling services and enabling real-time event-driven architectures.
 
-Here's how you can achieve this in Kotlin Spring Boot:
+Here's an overview of the implementation, including pros, cons, costs, risks, performance, dependencies, and the implementation steps in Kotlin Spring Boot:
 
-### Implementation Steps
+### Implementation Steps in Kotlin Spring Boot
 
-#### 1. Set Up Azure Cosmos DB for MongoDB API
-- **Create a Cosmos DB Instance**: Ensure you have an Azure Cosmos DB instance with MongoDB API enabled.
-- **Enable Change Streams**: Change streams should be enabled on your MongoDB collections.
+#### 1. Set Up Google Cloud Pub/Sub
+- **Create a Google Cloud Project**: Ensure you have a Google Cloud project set up.
+- **Create a Pub/Sub Topic**: In the Google Cloud Console, create a Pub/Sub topic that will receive the change events.
 
-#### 2. Create a Lease Collection
-- **Lease Collection**: Create a collection in Cosmos DB to store the resume tokens. This collection will be used to keep track of the last processed document in the change stream.
+#### 2. Configure Your Kotlin Spring Boot Application
 
-#### 3. Create an Azure Function with a Timer Trigger
-
-- **Create a Function App**: In the Azure Portal, create a new Function App.
-- **Set Up a Timer Trigger**: Define a timer trigger function that runs on a schedule (e.g., every 5 minutes).
-
-#### 4. Write Your Kotlin Spring Boot Application
-
-- **Add Dependencies**: Include the necessary dependencies in your `build.gradle` or `pom.xml` file for Azure Functions, MongoDB, and Spring Boot.
+- **Add Dependencies**: Include the necessary dependencies for Google Cloud Pub/Sub and Spring Boot in your `build.gradle` or `pom.xml`.
 
   ```groovy
   // Example for Gradle
   dependencies {
-      implementation 'com.microsoft.azure:azure-functions-java-library:1.4.2'
       implementation 'org.springframework.boot:spring-boot-starter'
-      implementation 'org.mongodb:mongodb-driver-sync:4.6.0'
+      implementation 'com.google.cloud:google-cloud-pubsub:1.114.7'
+      implementation 'org.jetbrains.kotlin:kotlin-stdlib-jdk8'
       // Add other necessary dependencies
   }
   ```
 
-- **Configure MongoDB Client**: Set up the MongoDB client to connect to your Cosmos DB instance.
+- **Configure Google Cloud Credentials**: Ensure your application has access to Google Cloud credentials. This can be done by setting the `GOOGLE_APPLICATION_CREDENTIALS` environment variable to the path of your service account key file.
 
-  ```kotlin
-  import com.mongodb.client.MongoClients
-  import com.mongodb.client.MongoClient
-  import com.mongodb.client.MongoDatabase
-  import com.mongodb.client.MongoCollection
-  import org.bson.Document
-  import org.springframework.stereotype.Component
-
-  @Component
-  class MongoDbClient {
-      private val connectionString = "mongodb://your-connection-string"
-      private val client: MongoClient = MongoClients.create(connectionString)
-      private val database: MongoDatabase = client.getDatabase("your-database")
-      val collection: MongoCollection<Document> = database.getCollection("your-collection")
-      val leaseCollection: MongoCollection<Document> = database.getCollection("lease-collection")
-  }
+  ```sh
+  export GOOGLE_APPLICATION_CREDENTIALS="/path/to/your/service-account-file.json"
   ```
 
-- **Implement Change Stream Listener with Resume Token**:
+- **Implement Pub/Sub Publisher**: Create a service to publish messages to the Pub/Sub topic asynchronously.
 
   ```kotlin
-  import com.mongodb.client.MongoCollection
-  import com.mongodb.client.model.changestream.ChangeStreamDocument
-  import com.mongodb.client.model.changestream.FullDocument
-  import org.bson.Document
-  import org.bson.BsonDocument
-  import org.bson.BsonString
+  import com.google.cloud.pubsub.v1.Publisher
+  import com.google.api.core.ApiFuture
+  import com.google.pubsub.v1.ProjectTopicName
+  import com.google.pubsub.v1.PubsubMessage
+  import org.springframework.stereotype.Service
+  import java.util.concurrent.TimeUnit
 
-  fun processChangeStream(collection: MongoCollection<Document>, leaseCollection: MongoCollection<Document>) {
-      val resumeTokenDoc = leaseCollection.find(Document("_id", "resumeToken")).first()
-      val resumeToken = resumeTokenDoc?.get("token") as? BsonDocument
+  @Service
+  class PubSubService {
+      private val projectId = "your-project-id"
+      private val topicId = "your-topic-id"
+      private val topicName = ProjectTopicName.of(projectId, topicId)
+      private val publisher: Publisher = Publisher.newBuilder(topicName).build()
 
-      val changeStream = collection.watch().fullDocument(FullDocument.UPDATE_LOOKUP).resumeAfter(resumeToken).iterator()
-      while (changeStream.hasNext()) {
-          val change: ChangeStreamDocument<Document> = changeStream.next()
-          // Process the change
-          println("Received change: ${change.fullDocument}")
+      fun publishMessage(message: String) {
+          val pubsubMessage = PubsubMessage.newBuilder().setData(message.toByteString()).build()
+          val future: ApiFuture<String> = publisher.publish(pubsubMessage)
+          // Optionally, handle the future
+      }
 
-          // Store the resume token
-          val newResumeToken = change.resumeToken
-          leaseCollection.updateOne(
-              Document("_id", "resumeToken"),
-              Document("\$set", Document("token", newResumeToken)),
-              UpdateOptions().upsert(true)
-          )
+      fun shutdown() {
+          publisher.shutdown()
+          publisher.awaitTermination(1, TimeUnit.MINUTES)
       }
   }
   ```
 
-- **Create Timer Trigger Function**: Create a timer-triggered function to periodically check for changes.
+- **Publish Event After Save/Update**: Use the Pub/Sub service to publish messages after save or update operations in your microservice.
 
   ```kotlin
-  import com.microsoft.azure.functions.annotation.TimerTrigger
-  import com.microsoft.azure.functions.ExecutionContext
-  import com.microsoft.azure.functions.annotation.FunctionName
+  import org.springframework.stereotype.Service
+
+  @Service
+  class YourService(private val pubSubService: PubSubService) {
+
+      fun saveOrUpdate(data: YourData) {
+          // Perform save or update operation
+          // ...
+          
+          // Publish event to Pub/Sub
+          val message = "Event data related to ${data.id}"
+          pubSubService.publishMessage(message)
+      }
+  }
+  ```
+
+- **Graceful Shutdown**: Ensure you shut down the Pub/Sub publisher gracefully during application shutdown.
+
+  ```kotlin
+  import org.springframework.boot.context.event.ApplicationReadyEvent
+  import org.springframework.context.ApplicationListener
   import org.springframework.stereotype.Component
 
   @Component
-  class TimerTriggerFunction {
-      @FunctionName("TimerTriggerFunction")
-      fun run(
-          @TimerTrigger(name = "timer", schedule = "0 */5 * * * *") timerInfo: String,
-          context: ExecutionContext
-      ) {
-          context.logger.info("Timer trigger function executed at: ${java.time.LocalDateTime.now()}")
-          val mongoClient = MongoDbClient()
-          processChangeStream(mongoClient.collection, mongoClient.leaseCollection)
+  class ShutdownHook(private val pubSubService: PubSubService) : ApplicationListener<ApplicationReadyEvent> {
+      override fun onApplicationEvent(event: ApplicationReadyEvent) {
+          Runtime.getRuntime().addShutdownHook(Thread {
+              pubSubService.shutdown()
+          })
       }
   }
   ```
@@ -106,41 +97,37 @@ Here's how you can achieve this in Kotlin Spring Boot:
 ### Pros and Cons
 
 #### Pros:
-1. **Resilience**: The use of resume tokens ensures that the function can resume processing changes from where it left off in case of interruptions.
-2. **Scalability**: Azure Functions automatically scale based on demand.
-3. **Integration**: Seamlessly integrates with other Azure services and Cosmos DB.
+1. **Decoupling**: Promotes a decoupled architecture where services communicate via events.
+2. **Real-Time Processing**: Enables real-time event processing and integration with other systems.
+3. **Scalability**: Google Cloud Pub/Sub is highly scalable and can handle large volumes of messages.
+4. **Flexibility**: Supports asynchronous communication, improving the responsiveness of your application.
 
 #### Cons:
-1. **Complexity**: Managing change stream listeners and resume tokens adds complexity.
-2. **Costs**: Costs associated with Azure Functions and Cosmos DB operations.
-3. **Latency**: There may be a delay between changes and processing due to the timer trigger.
+1. **Complexity**: Adds complexity to your architecture, including managing Pub/Sub configurations and credentials.
+2. **Error Handling**: Requires robust error handling and retry mechanisms for message publishing.
+3. **Latency**: There may be slight latency between the event and its processing in the subscriber systems.
 
 ### Costs
 
-- **Azure Functions**: Costs based on execution time, number of executions, and resources consumed.
-- **Cosmos DB for MongoDB API**: Costs based on provisioned throughput (RU/s), storage, and regional replication.
+- **Google Cloud Pub/Sub**: Costs are based on the number of messages published and the volume of data transferred. Pricing can be found on the [Google Cloud Pub/Sub pricing page](https://cloud.google.com/pubsub/pricing).
+- **Google Cloud Storage**: If messages are stored temporarily, there may be additional storage costs.
 
 ### Performance
 
-- **Change Streams**: Efficient for pulling changes, but performance may be affected by the frequency of polling and the volume of changes.
-- **Timer Trigger**: Executes at specified intervals; may need tuning to balance performance and cost.
+- **Asynchronous Publishing**: Publishing messages asynchronously allows for non-blocking operations, improving the performance of your application.
+- **Batch Processing**: If you are processing a large number of messages, consider batching messages to reduce the number of API calls and improve efficiency.
 
 ### Risks
 
-- **Overlapping Executions**: If not managed properly, multiple instances of the function might process the same changes.
-- **Data Consistency**: Ensure that your logic handles the processing of changes consistently to avoid data duplication or loss.
+- **Message Loss**: Ensure reliable message publishing and handle potential message loss or delivery issues.
+- **Authentication and Permissions**: Properly manage Google Cloud credentials and permissions to ensure secure access to Pub/Sub resources.
+- **Overhead**: Additional overhead for managing Pub/Sub connections and processing.
 
 ### Dependencies
 
-- **Azure Integration**: Dependence on Azure Functions for scheduling and triggering.
-- **MongoDB Driver**: Requires the MongoDB driver to connect and interact with Cosmos DB.
-
-### Issues Related to Overlapping Executions
-
-- **Idempotency**: Ensure your change processing logic is idempotent, meaning it can handle multiple executions without causing unintended side effects.
-- **Locking Mechanism**: Implement a locking mechanism or checkpointing to track processed changes and prevent duplicate processing.
-- **Monitoring and Alerts**: Set up monitoring and alerts to detect and address any issues with overlapping executions or other anomalies.
+- **Google Cloud Pub/Sub SDK**: Requires the Google Cloud Pub/Sub client library.
+- **Kubernetes**: Your microservice will run in a Kubernetes cluster, which requires proper configuration and deployment.
 
 ### Summary
 
-Using Azure Cosmos DB for MongoDB API with a timer-triggered Azure Function to process change streams in Kotlin Spring Boot, combined with a lease collection to store resume tokens, provides a resilient and scalable solution. This approach ensures that the function can resume from where it left off and handle real-time data processing efficiently. However, it requires careful management of complexity, costs, and potential overlapping executions to maintain data consistency and performance.
+Pushing database change events directly to Google Cloud Pub/Sub from a microservice deployed in a Kubernetes cluster using Kotlin Spring Boot involves implementing an asynchronous publisher to send messages after save or update operations. This approach leverages the scalability and real-time capabilities of Google Cloud Pub/Sub but requires careful management of complexity, costs, error handling, and performance considerations. By following the outlined implementation steps and addressing potential risks, you can build a robust and scalable event-driven architecture.
