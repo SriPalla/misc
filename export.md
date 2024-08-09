@@ -1,151 +1,110 @@
-To implement pulling events from Azure Cosmos DB for MongoDB API using a change stream listener in a Spring Boot Kotlin application deployed on Azure App Service, follow these steps. This approach ensures that your application can handle real-time data changes effectively.
+To define a recon file format, create a sync endpoint, and integrate it into an Azure Pipeline, you can follow these steps:
 
-### Implementation Steps in Kotlin Spring Boot
+### 1. **Define the Recon File Format**
+   - **File Type**: Choose a format like JSON, CSV, or XML depending on the complexity and volume of data.
+   - **Fields**: Include the following key fields:
+     - `CustomerID`: Unique identifier for the customer.
+     - `FieldName`: Name of the field where the change was detected.
+     - `OldValue`: The value of the field in the target system.
+     - `NewValue`: The value of the field in the source system.
+     - `LastUpdatedBy`: Which system (source or target) has the latest data.
+     - `Timestamp`: When the change was detected.
+   - **Example (JSON)**:
+     ```json
+     [
+       {
+         "CustomerID": "123",
+         "FieldName": "email",
+         "OldValue": "old@example.com",
+         "NewValue": "new@example.com",
+         "LastUpdatedBy": "source",
+         "Timestamp": "2024-08-09T12:34:56Z"
+       },
+       {
+         "CustomerID": "124",
+         "FieldName": "phone",
+         "OldValue": "1234567890",
+         "NewValue": "0987654321",
+         "LastUpdatedBy": "target",
+         "Timestamp": "2024-08-09T12:35:00Z"
+       }
+     ]
+     ```
 
-#### 1. Set Up Azure Cosmos DB for MongoDB API
+### 2. **Create the Sync Endpoint**
+   - **API Design**: Create an API that accepts the recon file and updates the target system accordingly.
+   - **Input**: The API should take the recon file as input (e.g., in JSON format).
+   - **Logic**:
+     - Parse the recon file.
+     - For each entry, check `LastUpdatedBy` to determine if the target system needs updating.
+     - Update the corresponding field in the target system.
+   - **Response**: Return a summary of the updates made or any errors encountered.
+   - **Example (Kotlin Spring Boot)**:
+     ```kotlin
+     @PostMapping("/sync")
+     fun syncData(@RequestBody reconFile: List<ReconData>): ResponseEntity<String> {
+         reconFile.forEach { data ->
+             if (data.lastUpdatedBy == "source") {
+                 updateTargetSystem(data.customerID, data.fieldName, data.newValue)
+             }
+         }
+         return ResponseEntity.ok("Sync complete")
+     }
+     
+     data class ReconData(
+         val customerID: String,
+         val fieldName: String,
+         val oldValue: String?,
+         val newValue: String,
+         val lastUpdatedBy: String,
+         val timestamp: String
+     )
+     
+     fun updateTargetSystem(customerID: String, fieldName: String, newValue: String) {
+         // Logic to update target system
+     }
+     ```
 
-- **Create a Cosmos DB Instance**: Ensure you have an Azure Cosmos DB instance with the MongoDB API enabled.
-- **Enable Change Streams**: Change streams should be enabled on your MongoDB collections.
+### 3. **Integrate with Azure Pipeline**
+   - **Azure DevOps Pipeline**:
+     - Create a pipeline that triggers on a schedule or when changes are detected in the source system.
+     - **Steps**:
+       1. **Download the Recon File**: If the file is generated elsewhere, use a pipeline task to download it.
+       2. **Invoke the Sync API**: Use a task to call the sync API with the recon file as input.
+       3. **Monitor and Log**: Log the API response and monitor for any failures.
+     - **Pipeline YAML Example**:
+       ```yaml
+       trigger:
+         branches:
+           include:
+             - main
 
-#### 2. Write Your Spring Boot Application in Kotlin
+       pool:
+         vmImage: 'ubuntu-latest'
 
-- **Add Dependencies**: Include the necessary dependencies in your `build.gradle` or `pom.xml` file for Spring Boot and MongoDB.
+       steps:
+       - task: DownloadReconFile@1
+         inputs:
+           fileUrl: 'https://source-system.com/recon-file.json'
+           outputPath: '$(Build.ArtifactStagingDirectory)/recon-file.json'
 
-  ```groovy
-  // Example for Gradle
-  dependencies {
-      implementation 'org.springframework.boot:spring-boot-starter'
-      implementation 'org.springframework.boot:spring-boot-starter-data-mongodb'
-      implementation 'org.springframework.boot:spring-boot-starter-web'
-      implementation 'org.springframework.boot:spring-boot-starter-actuator'
-  }
-  ```
+       - task: HttpCall@1
+         inputs:
+           connectedServiceName: 'YourServiceConnection'
+           urlSuffix: '/sync'
+           method: 'POST'
+           headers: |
+             Content-Type: application/json
+           body: '$(Build.ArtifactStagingDirectory)/recon-file.json'
 
-- **Configure MongoDB Client**: Set up the MongoDB client to connect to your Cosmos DB instance.
+       - task: PublishBuildArtifacts@1
+         inputs:
+           pathToPublish: '$(Build.ArtifactStagingDirectory)'
+           artifactName: 'logs'
+       ```
 
-  ```kotlin
-  import com.mongodb.client.MongoClients
-  import com.mongodb.client.MongoClient
-  import com.mongodb.client.MongoDatabase
-  import com.mongodb.client.MongoCollection
-  import org.bson.Document
-  import org.springframework.context.annotation.Bean
-  import org.springframework.context.annotation.Configuration
+### 4. **Testing & Monitoring**
+   - Test the API endpoint with different recon files to ensure it behaves as expected.
+   - Monitor the Azure Pipeline for execution success and any issues.
 
-  @Configuration
-  class MongoConfig {
-      @Bean
-      fun mongoClient(): MongoClient {
-          return MongoClients.create("mongodb://your-connection-string")
-      }
-
-      @Bean
-      fun mongoDatabase(mongoClient: MongoClient): MongoDatabase {
-          return mongoClient.getDatabase("your-database")
-      }
-
-      @Bean
-      fun mongoCollection(mongoDatabase: MongoDatabase): MongoCollection<Document> {
-          return mongoDatabase.getCollection("your-collection")
-      }
-  }
-  ```
-
-- **Implement Change Stream Listener**: Create a service to handle the change stream.
-
-  ```kotlin
-  import com.mongodb.client.MongoCollection
-  import com.mongodb.client.model.changestream.ChangeStreamDocument
-  import com.mongodb.client.model.changestream.FullDocument
-  import org.bson.Document
-  import org.springframework.beans.factory.annotation.Autowired
-  import org.springframework.stereotype.Service
-
-  @Service
-  class ChangeStreamService(@Autowired private val mongoCollection: MongoCollection<Document>) {
-
-      fun startListening() {
-          val changeStream = mongoCollection.watch().fullDocument(FullDocument.UPDATE_LOOKUP).iterator()
-          while (changeStream.hasNext()) {
-              val change: ChangeStreamDocument<Document> = changeStream.next()
-              // Process the change
-              println("Received change: ${change.fullDocument}")
-              // Implement your processing logic here
-          }
-      }
-  }
-  ```
-
-- **Initialize Change Stream Listener**: Ensure the change stream listener starts when the application starts.
-
-  ```kotlin
-  import org.springframework.boot.CommandLineRunner
-  import org.springframework.boot.autoconfigure.SpringBootApplication
-  import org.springframework.boot.runApplication
-  import org.springframework.context.annotation.Bean
-
-  @SpringBootApplication
-  class Application {
-
-      @Bean
-      fun init(changeStreamService: ChangeStreamService) = CommandLineRunner {
-          changeStreamService.startListening()
-      }
-  }
-
-  fun main(args: Array<String>) {
-      runApplication<Application>(*args)
-  }
-  ```
-
-#### 3. Deploy to Azure App Service
-
-- **Create a Docker Image**: Dockerize your Spring Boot application.
-  - Create a `Dockerfile`:
-
-    ```dockerfile
-    FROM openjdk:11-jre-slim
-    VOLUME /tmp
-    COPY target/*.jar app.jar
-    ENTRYPOINT ["java","-jar","/app.jar"]
-    ```
-
-- **Deploy to Azure App Service**:
-  - Use Azure CLI or Azure Portal to deploy your Dockerized Spring Boot application to Azure App Service.
-
-### Pros and Cons
-
-#### Pros:
-1. **Real-time Data Processing**: Enables real-time processing of data changes.
-2. **Scalability**: Azure App Service provides automatic scaling.
-3. **Managed Service**: Reduces infrastructure management overhead.
-
-#### Cons:
-1. **Complexity**: Implementing change stream listeners can add complexity.
-2. **Costs**: Costs associated with Azure App Service and Cosmos DB usage.
-3. **Latency**: There could be a slight delay due to network latency and processing time.
-
-### Costs
-
-- **Azure App Service**: Costs based on the pricing tier selected (Basic, Standard, Premium, etc.).
-- **Cosmos DB for MongoDB API**: Costs based on provisioned throughput (RU/s), storage, and regional replication.
-
-### Performance
-
-- **Change Streams**: Efficient for real-time processing, but the performance depends on the volume of data changes.
-- **App Service**: Azure App Service provides good performance and scales based on the demand.
-
-### Risks
-
-- **Failure Handling**: Ensure your application can handle failures gracefully.
-- **Overlapping Executions**: If not managed properly, there could be issues with overlapping executions.
-- **Data Consistency**: Ensure idempotent processing to avoid data inconsistencies.
-
-### Dependencies
-
-- **Azure Cosmos DB**: Requires a connection to Azure Cosmos DB with MongoDB API.
-- **Azure App Service**: Requires setting up and managing the deployment on Azure App Service.
-
-### Summary
-
-Using Azure Cosmos DB for MongoDB API with a change stream listener in a Spring Boot Kotlin application deployed on Azure App Service enables real-time data processing. This approach leverages Azure's scalability and managed services while providing a robust mechanism for handling database changes. However, it requires careful handling of complexity, costs, and potential issues related to data consistency and overlapping executions. Implementing the solution involves configuring MongoDB clients, creating change stream listeners, and deploying the application to Azure App Service.
+This setup allows you to automate the synchronization process between two systems, ensuring that the target system is always up-to-date with the source system based on the changes detected in the recon file.
