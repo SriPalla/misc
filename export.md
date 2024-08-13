@@ -1,110 +1,121 @@
-To define a recon file format, create a sync endpoint, and integrate it into an Azure Pipeline, you can follow these steps:
+To achieve this setup, you'll need to create a Google Cloud Function in Python 3.12 that triggers when a new file is added to a Google Cloud Storage bucket. This Cloud Function will then invoke a Cloud Run job, passing the filename as an argument. The Cloud Run job, which is a Kotlin Spring Boot application, will read the filename from the arguments.
 
-### 1. **Define the Recon File Format**
-   - **File Type**: Choose a format like JSON, CSV, or XML depending on the complexity and volume of data.
-   - **Fields**: Include the following key fields:
-     - `CustomerID`: Unique identifier for the customer.
-     - `FieldName`: Name of the field where the change was detected.
-     - `OldValue`: The value of the field in the target system.
-     - `NewValue`: The value of the field in the source system.
-     - `LastUpdatedBy`: Which system (source or target) has the latest data.
-     - `Timestamp`: When the change was detected.
-   - **Example (JSON)**:
-     ```json
-     [
-       {
-         "CustomerID": "123",
-         "FieldName": "email",
-         "OldValue": "old@example.com",
-         "NewValue": "new@example.com",
-         "LastUpdatedBy": "source",
-         "Timestamp": "2024-08-09T12:34:56Z"
-       },
-       {
-         "CustomerID": "124",
-         "FieldName": "phone",
-         "OldValue": "1234567890",
-         "NewValue": "0987654321",
-         "LastUpdatedBy": "target",
-         "Timestamp": "2024-08-09T12:35:00Z"
-       }
-     ]
-     ```
+### Step 1: Create a Google Cloud Function (Python 3.12)
 
-### 2. **Create the Sync Endpoint**
-   - **API Design**: Create an API that accepts the recon file and updates the target system accordingly.
-   - **Input**: The API should take the recon file as input (e.g., in JSON format).
-   - **Logic**:
-     - Parse the recon file.
-     - For each entry, check `LastUpdatedBy` to determine if the target system needs updating.
-     - Update the corresponding field in the target system.
-   - **Response**: Return a summary of the updates made or any errors encountered.
-   - **Example (Kotlin Spring Boot)**:
-     ```kotlin
-     @PostMapping("/sync")
-     fun syncData(@RequestBody reconFile: List<ReconData>): ResponseEntity<String> {
-         reconFile.forEach { data ->
-             if (data.lastUpdatedBy == "source") {
-                 updateTargetSystem(data.customerID, data.fieldName, data.newValue)
-             }
-         }
-         return ResponseEntity.ok("Sync complete")
-     }
-     
-     data class ReconData(
-         val customerID: String,
-         val fieldName: String,
-         val oldValue: String?,
-         val newValue: String,
-         val lastUpdatedBy: String,
-         val timestamp: String
-     )
-     
-     fun updateTargetSystem(customerID: String, fieldName: String, newValue: String) {
-         // Logic to update target system
-     }
-     ```
+Here’s the Python code for the Google Cloud Function:
 
-### 3. **Integrate with Azure Pipeline**
-   - **Azure DevOps Pipeline**:
-     - Create a pipeline that triggers on a schedule or when changes are detected in the source system.
-     - **Steps**:
-       1. **Download the Recon File**: If the file is generated elsewhere, use a pipeline task to download it.
-       2. **Invoke the Sync API**: Use a task to call the sync API with the recon file as input.
-       3. **Monitor and Log**: Log the API response and monitor for any failures.
-     - **Pipeline YAML Example**:
-       ```yaml
-       trigger:
-         branches:
-           include:
-             - main
+```python
+import os
+from google.cloud import storage, run_v2
+from google.oauth2 import service_account
 
-       pool:
-         vmImage: 'ubuntu-latest'
+# Set up your project and service account details
+PROJECT_ID = "your-project-id"
+LOCATION = "us-central1"  # Adjust as needed
+SERVICE_ACCOUNT_KEY = "path/to/your/service-account-key.json"
+CLOUD_RUN_SERVICE_NAME = "your-cloud-run-job-name"
 
-       steps:
-       - task: DownloadReconFile@1
-         inputs:
-           fileUrl: 'https://source-system.com/recon-file.json'
-           outputPath: '$(Build.ArtifactStagingDirectory)/recon-file.json'
+# Initialize Cloud Run and Storage clients
+credentials = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_KEY)
+run_client = run_v2.JobsClient(credentials=credentials)
+storage_client = storage.Client(credentials=credentials)
 
-       - task: HttpCall@1
-         inputs:
-           connectedServiceName: 'YourServiceConnection'
-           urlSuffix: '/sync'
-           method: 'POST'
-           headers: |
-             Content-Type: application/json
-           body: '$(Build.ArtifactStagingDirectory)/recon-file.json'
+def trigger_cloud_run(data, context):
+    # Extract the bucket name and file name from the Cloud Storage event
+    bucket_name = data['bucket']
+    file_name = data['name']
 
-       - task: PublishBuildArtifacts@1
-         inputs:
-           pathToPublish: '$(Build.ArtifactStagingDirectory)'
-           artifactName: 'logs'
-       ```
+    # Define the Cloud Run job request
+    job_request = run_v2.RunJobRequest(
+        name=f"projects/{PROJECT_ID}/locations/{LOCATION}/jobs/{CLOUD_RUN_SERVICE_NAME}",
+        args=[file_name]
+    )
 
-### 4. **Testing & Monitoring**
-   - Test the API endpoint with different recon files to ensure it behaves as expected.
-   - Monitor the Azure Pipeline for execution success and any issues.
+    # Invoke the Cloud Run job
+    response = run_client.run_job(request=job_request)
 
-This setup allows you to automate the synchronization process between two systems, ensuring that the target system is always up-to-date with the source system based on the changes detected in the recon file.
+    print(f"Cloud Run Job triggered for file: {file_name}")
+    print(f"Response: {response}")
+
+    return response
+```
+
+**Notes:**
+- Replace `"your-project-id"`, `"us-central1"`, `"path/to/your/service-account-key.json"`, and `"your-cloud-run-job-name"` with your actual project ID, location, service account key file path, and Cloud Run job name.
+
+### Step 2: Deploy the Google Cloud Function
+
+1. Save the above code in a `main.py` file.
+2. Create a `requirements.txt` file with the following content:
+
+    ```
+    google-cloud-storage
+    google-cloud-run
+    google-auth
+    ```
+
+3. Deploy the function using the following command:
+
+    ```bash
+    gcloud functions deploy trigger-cloud-run-job \
+    --runtime python312 \
+    --trigger-resource your-bucket-name \
+    --trigger-event google.storage.object.finalize \
+    --entry-point trigger_cloud_run \
+    --region us-central1 \
+    --service-account your-service-account@your-project-id.iam.gserviceaccount.com
+    ```
+
+### Step 3: Modify the Cloud Run Job (Kotlin Spring Boot)
+
+In your Kotlin Spring Boot application, you need to read the argument passed by the Cloud Run job. Here’s how you can modify the Spring Boot application to capture and process the filename:
+
+```kotlin
+import org.springframework.boot.ApplicationArguments
+import org.springframework.boot.ApplicationRunner
+import org.springframework.boot.autoconfigure.SpringBootApplication
+import org.springframework.boot.runApplication
+
+@SpringBootApplication
+class CloudRunJobApplication : ApplicationRunner {
+
+    override fun run(args: ApplicationArguments) {
+        val fileName = args.getOptionValues("fileName")?.firstOrNull()
+
+        if (fileName != null) {
+            println("Processing file: $fileName")
+            // Add your file processing logic here
+        } else {
+            println("No filename provided")
+        }
+    }
+}
+
+fun main(args: Array<String>) {
+    runApplication<CloudRunJobApplication>(*args)
+}
+```
+
+In this code:
+- The `ApplicationArguments` object captures the arguments passed to the Cloud Run job.
+- The filename is retrieved using `args.getOptionValues("fileName")`.
+
+### Step 4: Deploy the Cloud Run Job
+
+1. Build your Kotlin Spring Boot application:
+
+    ```bash
+    ./gradlew bootBuildImage
+    ```
+
+2. Deploy it to Cloud Run:
+
+    ```bash
+    gcloud run jobs create your-cloud-run-job-name \
+    --image gcr.io/your-project-id/your-image-name \
+    --region us-central1
+    ```
+
+### Summary
+- The Cloud Function is triggered by a new file in a storage bucket, invokes the Cloud Run job, and passes the filename as an argument.
+- The Cloud Run job, implemented as a Kotlin Spring Boot application, reads and processes the filename.
