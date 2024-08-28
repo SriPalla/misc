@@ -1,130 +1,89 @@
-import com.mongodb.MongoClientSettings
-import com.mongodb.connection.SocketSettings
-import com.mongodb.connection.ConnectionPoolSettings
-import com.mongodb.connection.ServerSettings
-import com.mongodb.connection.ClusterSettings
-import com.mongodb.connection.SocketSettings
-import org.springframework.context.annotation.Bean
-import org.springframework.context.annotation.Configuration
-import java.util.concurrent.TimeUnit
+To generate an access token in Apache JMeter using the JSR223 Post Processor, you can write a Groovy script to make an HTTP request to your authentication server (e.g., OAuth 2.0 token endpoint) and extract the access token from the response. Here's a step-by-step guide:
 
-@Configuration
-class MongoConfig {
+### Step 1: Add a JSR223 Post Processor
 
-    @Bean
-    fun mongoClientSettings(): MongoClientSettings {
-        return MongoClientSettings.builder()
-            .applyToClusterSettings { builder: ClusterSettings.Builder ->
-                builder.serverSelectionTimeout(5000, TimeUnit.MILLISECONDS)
-            }
-            .applyToSocketSettings { builder: SocketSettings.Builder ->
-                builder.connectTimeout(10000, TimeUnit.MILLISECONDS)
-                builder.readTimeout(30000, TimeUnit.MILLISECONDS)
-            }
-            .applyToConnectionPoolSettings { builder: ConnectionPoolSettings.Builder ->
-                builder.maxConnectionIdleTime(30000, TimeUnit.MILLISECONDS)
-            }
-            .applyToServerSettings { builder: ServerSettings.Builder ->
-                builder.heartbeatFrequency(10000, TimeUnit.MILLISECONDS)
-            }
-            .build()
-    }
+1. In your JMeter test plan, add a **JSR223 Post Processor** under the appropriate HTTP Request sampler (the request that needs the access token).
+2. Set the **Language** field to **Groovy**.
+
+### Step 2: Write the Groovy Script
+
+Here is an example of a Groovy script that you can use to generate an access token:
+
+```groovy
+import org.apache.jmeter.protocol.http.control.HeaderManager
+import org.apache.jmeter.protocol.http.sampler.HTTPSamplerProxy
+import org.apache.jmeter.samplers.SampleResult
+import org.apache.jmeter.protocol.http.util.HTTPArgument
+import groovy.json.JsonSlurper
+
+// Define the token endpoint and credentials
+def tokenUrl = "https://your-auth-server.com/oauth/token"
+def clientId = "your-client-id"
+def clientSecret = "your-client-secret"
+def username = "your-username"
+def password = "your-password"
+def grantType = "password" // Use "client_credentials" if using client credentials grant
+
+// Create an HTTP Sampler to request the access token
+HTTPSamplerProxy httpSampler = new HTTPSamplerProxy()
+httpSampler.setDomain("your-auth-server.com")
+httpSampler.setPath("/oauth/token")
+httpSampler.setMethod("POST")
+httpSampler.setProtocol("https")
+
+// Set POST body parameters
+def arguments = httpSampler.getArguments()
+arguments.addArgument("grant_type", grantType)
+arguments.addArgument("client_id", clientId)
+arguments.addArgument("client_secret", clientSecret)
+arguments.addArgument("username", username)
+arguments.addArgument("password", password)
+
+// Add a HeaderManager to set the content type
+HeaderManager headerManager = new HeaderManager()
+headerManager.add("Content-Type", "application/x-www-form-urlencoded")
+httpSampler.setHeaderManager(headerManager)
+
+// Execute the HTTP request
+SampleResult result = httpSampler.sample()
+
+// Check the response code and extract the access token
+if (result.getResponseCode() == "200") {
+    def jsonResponse = new JsonSlurper().parseText(result.getResponseDataAsString())
+    def accessToken = jsonResponse.access_token
+    
+    // Save the access token to a JMeter variable
+    vars.put("accessToken", accessToken)
+    
+    log.info("Access Token: " + accessToken)
+} else {
+    log.error("Failed to obtain access token. Response code: " + result.getResponseCode())
+    log.error("Response message: " + result.getResponseMessage())
 }
-
-
-
-Here's a basic template for a `README.md` file for a 
-
-This repository contains a Google Cloud Function written in Python that triggers a Cloud Run job. The function listens for a specific event (e.g., a new file added to a Google Cloud Storage bucket) and invokes the Cloud Run job, passing relevant data as an argument.
-
-## Prerequisites
-
-Before deploying and using this Cloud Function, ensure you have the following:
-
-- **Google Cloud Project**: Ensure your Google Cloud Project is set up and you have the necessary permissions.
-- **Cloud Storage Bucket**: The function is triggered when a file is added to a specific bucket.
-- **Cloud Run Job**: A pre-configured Cloud Run job that the function will invoke.
-
-## Setup and Deployment
-
-### 1. Clone the Repository
-
-```bash
-git clone https://github.com/your-repository.git
-cd your-repository
 ```
 
-### 2. Set Up Google Cloud SDK
+### Step 3: Use the Access Token in Subsequent Requests
 
-Make sure the Google Cloud SDK is installed and initialized:
+Now that the access token is stored in a JMeter variable (`accessToken`), you can use it in subsequent HTTP requests by referencing it as `${accessToken}`.
 
-```bash
-gcloud init
-```
+For example, in an HTTP Request sampler, add the following to the **HTTP Header Manager**:
 
-### 3. Configure Environment Variables
+- **Name**: `Authorization`
+- **Value**: `Bearer ${accessToken}`
 
-Create a `.env` file or set environment variables directly in the Google Cloud Console for the following:
+### Explanation of the Script
 
-- `CLOUD_RUN_JOB_URL`: The URL of the Cloud Run job to be invoked.
-- `PROJECT_ID`: The Google Cloud project ID.
-- `REGION`: The region where the Cloud Run job is deployed.
+- **HTTPSamplerProxy**: This is used to create an HTTP request within the JSR223 script.
+- **HeaderManager**: Manages the HTTP headers. In this case, it's used to set the `Content-Type` to `application/x-www-form-urlencoded`.
+- **SampleResult**: Captures the result of the HTTP request.
+- **JsonSlurper**: Used to parse the JSON response to extract the `access_token`.
 
-Example `.env` file:
+### Error Handling
 
-```bash
-CLOUD_RUN_JOB_URL=https://your-cloud-run-job-url
-PROJECT_ID=your-google-cloud-project-id
-REGION=your-cloud-region
-```
+The script checks if the response code is `200`. If it is not, it logs an error. You can extend this part to include more robust error handling based on your requirements.
 
-### 4. Deploy the Cloud Function
+### Step 4: Run Your Test Plan
 
-Deploy the Cloud Function using the following command:
+Once the script is in place, you can run your test plan. The access token will be automatically generated and used in subsequent requests.
 
-```bash
-gcloud functions deploy invokeCloudRunJob \
-  --runtime python311 \
-  --trigger-resource your-bucket-name \
-  --trigger-event google.storage.object.finalize \
-  --entry-point main \
-  --set-env-vars CLOUD_RUN_JOB_URL=https://your-cloud-run-job-url,PROJECT_ID=your-google-cloud-project-id,REGION=your-cloud-region \
-  --region your-function-region
-```
-
-### 5. Testing the Cloud Function
-
-Upload a file to the specified Cloud Storage bucket to trigger the function. The function will invoke the Cloud Run job and pass the filename as an argument.
-
-## Code Overview
-
-### `main.py`
-
-This file contains the main logic for the Cloud Function.
-
-- **`main(event, context)`**: Entry point for the Cloud Function. It extracts the filename from the event and invokes the Cloud Run job with the filename as an argument.
-
-### `requirements.txt`
-
-Contains the Python dependencies for the Cloud Function.
-
-### `app.yaml`
-
-(Optional) Deployment configuration file for the Cloud Function.
-
-## Logging and Monitoring
-
-Google Cloud's built-in logging is used for monitoring function executions. You can view logs via the [Google Cloud Console](https://console.cloud.google.com/logs).
-
-## Troubleshooting
-
-- **Permission Errors**: Ensure that the service account running the Cloud Function has the necessary permissions to invoke the Cloud Run job.
-- **Environment Variables**: Double-check the environment variables, especially the `CLOUD_RUN_JOB_URL`.
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
-This template should cover the basics for most users, but you can adapt it to include additional details like more advanced configuration, CI/CD setup, or specific use cases relevant to your project.
+This approach allows you to dynamically generate and use access tokens within your JMeter test plan, which is essential for testing APIs that require authentication.
