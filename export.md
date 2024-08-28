@@ -1,8 +1,39 @@
-Here's a basic template for a `README.md` file for a Python Google Cloud Function that invokes a Cloud Run job. You can customize it according to your specific needs:
+import com.mongodb.MongoClientSettings
+import com.mongodb.connection.SocketSettings
+import com.mongodb.connection.ConnectionPoolSettings
+import com.mongodb.connection.ServerSettings
+import com.mongodb.connection.ClusterSettings
+import com.mongodb.connection.SocketSettings
+import org.springframework.context.annotation.Bean
+import org.springframework.context.annotation.Configuration
+import java.util.concurrent.TimeUnit
 
----
+@Configuration
+class MongoConfig {
 
-# Google Cloud Function to Invoke Cloud Run Job
+    @Bean
+    fun mongoClientSettings(): MongoClientSettings {
+        return MongoClientSettings.builder()
+            .applyToClusterSettings { builder: ClusterSettings.Builder ->
+                builder.serverSelectionTimeout(5000, TimeUnit.MILLISECONDS)
+            }
+            .applyToSocketSettings { builder: SocketSettings.Builder ->
+                builder.connectTimeout(10000, TimeUnit.MILLISECONDS)
+                builder.readTimeout(30000, TimeUnit.MILLISECONDS)
+            }
+            .applyToConnectionPoolSettings { builder: ConnectionPoolSettings.Builder ->
+                builder.maxConnectionIdleTime(30000, TimeUnit.MILLISECONDS)
+            }
+            .applyToServerSettings { builder: ServerSettings.Builder ->
+                builder.heartbeatFrequency(10000, TimeUnit.MILLISECONDS)
+            }
+            .build()
+    }
+}
+
+
+
+Here's a basic template for a `README.md` file for a 
 
 This repository contains a Google Cloud Function written in Python that triggers a Cloud Run job. The function listens for a specific event (e.g., a new file added to a Google Cloud Storage bucket) and invokes the Cloud Run job, passing relevant data as an argument.
 
