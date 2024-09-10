@@ -1,72 +1,108 @@
-For a production environment with a 2-second response time SLA, here are the optimized configuration values and strategies for each non-functional requirement:
+Here's an optimized code example for a Spring Boot Kotlin Cloud Run app that exposes an API endpoint to handle a CloudEvent, routes it to the appropriate Pub/Sub topic based on message type from `application.yml`, and ensures publishers are reused per topic using coroutines.
 
-### 1. **Response Time**
-   - **Normal Load**:
-     - **Target**: 95% of responses should be under 2 seconds.
-     - **Config**: Ensure your application is optimized for quick responses by minimizing processing time and using efficient algorithms.
-   - **Peak Load**:
-     - **Target**: 95% of responses should remain under 2 seconds during peak traffic.
-     - **Config**: Implement caching strategies (e.g., in-memory caches like Redis) and optimize database queries to handle high load efficiently.
-   - **Timeouts**:
-     - **Downstream Service Timeout**: Set a timeout of 1 second for calls to downstream services.
-     - **Internal Processing Timeout**: Set internal processing timeouts to ensure operations complete quickly, avoiding bottlenecks.
-   - **Monitoring**:
-     - **Tools**: Use tools like Prometheus with Grafana for real-time monitoring of response times and alerts on SLA breaches.
+### `application.yml`
 
-### 2. **Retry Definitions for Downstream Calls**
-   - **Max Retries**:
-     - **Value**: Configure a maximum of 2 or 3 retry attempts to avoid excessive delays.
-   - **Backoff Strategy**:
-     - **Value**: Use exponential backoff with a cap (e.g., initial delay of 200ms, doubling each time, up to a maximum of 1 second).
-   - **Circuit Breaker**:
-     - **Thresholds**: Configure circuit breakers with thresholds for failure rates (e.g., if 50% of requests fail within a 10-second window).
-   - **Idempotency**:
-     - **Design**: Ensure retryable operations are idempotent to avoid unintended side effects.
+```yaml
+pubsub:
+  topics:
+    - eventType: "com.example.type1"
+      topic: "projects/your-project-id/topics/topic1"
+    - eventType: "com.example.type2"
+      topic: "projects/your-project-id/topics/topic2"
+```
 
-### 3. **Availability**
-   - **Uptime Target**:
-     - **Value**: Aim for 99.9% availability, translating to a maximum of 8.76 hours of downtime per year.
-   - **Redundancy**:
-     - **Deployment**: Use multiple instances and regions (or availability zones) to ensure redundancy.
-   - **Failover**:
-     - **Configuration**: Implement active-active or active-passive failover strategies.
-   - **Health Checks**:
-     - **Frequency**: Perform health checks at 30-second intervals to detect and address issues quickly.
-   - **Disaster Recovery**:
-     - **RTO/RPO**: Define an RTO (Recovery Time Objective) of under 1 hour and an RPO (Recovery Point Objective) of under 5 minutes.
+### Pub/Sub Configuration (Singleton for Publisher)
 
-### 4. **Memory and CPU Consumption for POD-Based Deployment**
-   - **Resource Requests and Limits**:
-     - **Memory**:
-       - **Request**: 512MB per pod.
-       - **Limit**: 1GB per pod.
-     - **CPU**:
-       - **Request**: 0.5 CPU per pod.
-       - **Limit**: 1 CPU per pod.
-   - **Scaling**:
-     - **Horizontal Pod Autoscaling**: Configure autoscaling to trigger based on CPU utilization (e.g., scale out when CPU usage exceeds 70%).
-     - **Vertical Pod Autoscaling**: Adjust resource requests and limits based on historical usage patterns.
-   - **Monitoring**:
-     - **Tools**: Use Kubernetes metrics server or custom monitoring solutions to track memory and CPU usage.
+```kotlin
+import com.google.cloud.pubsub.v1.Publisher
+import org.springframework.context.annotation.Bean
+import org.springframework.context.annotation.Configuration
+import java.util.concurrent.ConcurrentHashMap
 
-### 5. **Performance Testing**
-   - **Load Testing**:
-     - **Tool**: Use JMeter, Gatling, or Locust to simulate realistic load scenarios.
-     - **Targets**: Ensure the API can handle the expected peak load with 95% of responses within 2 seconds.
-   - **Stress Testing**:
-     - **Objective**: Identify the breaking point of the system and understand how it handles extreme load.
-     - **Metrics**: Measure response times, error rates, and system stability under stress.
-   - **Endurance Testing**:
-     - **Objective**: Test the system under continuous load over an extended period (e.g., 24 hours) to identify issues such as memory leaks.
-   - **Capacity Planning**:
-     - **Approach**: Use test results to plan for future scaling needs, ensuring that infrastructure can handle growth without performance degradation.
+@Configuration
+class PubSubConfig {
 
-### **Optimized Config Values for Production**
+    private val publishers: MutableMap<String, Publisher> = ConcurrentHashMap()
 
-- **Response Time**: Ensure 95% of responses are under 2 seconds. Use caching, optimize queries, and minimize processing time.
-- **Retries**: Max 2-3 retries with exponential backoff, circuit breaker pattern.
-- **Availability**: Aim for 99.9% uptime, use redundancy and failover strategies, and have robust disaster recovery plans.
-- **Resource Allocation**: Set appropriate resource requests and limits for pods, and configure autoscaling based on usage patterns.
-- **Performance Testing**: Conduct comprehensive load, stress, and endurance testing to validate and refine configurations.
+    @Bean
+    fun getPublisherFactory(): (String) -> Publisher {
+        return { topicName ->
+            publishers.computeIfAbsent(topicName) {
+                Publisher.newBuilder(topicName).build()
+            }
+        }
+    }
+}
+```
 
-Implementing these configurations and strategies will help ensure your API meets the 2-second response time SLA and maintains high performance and reliability in production.
+### CloudEvent Processing Service
+
+```kotlin
+import com.google.cloud.pubsub.v1.Publisher
+import com.google.protobuf.ByteString
+import com.google.pubsub.v1.PubsubMessage
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.springframework.beans.factory.annotation.Value
+import org.springframework.stereotype.Service
+
+@Service
+class CloudEventService(
+    private val getPublisherFactory: (String) -> Publisher
+) {
+
+    @Value("\${pubsub.topics}")
+    lateinit var topicMappings: List<TopicMapping>
+
+    data class TopicMapping(val eventType: String, val topic: String)
+
+    suspend fun publishCloudEvent(eventType: String, eventPayload: String) {
+        val topic = topicMappings.find { it.eventType == eventType }?.topic
+            ?: throw IllegalArgumentException("No topic found for event type $eventType")
+
+        val publisher = getPublisherFactory(topic)
+        val message = PubsubMessage.newBuilder()
+            .setData(ByteString.copyFromUtf8(eventPayload))
+            .build()
+
+        withContext(Dispatchers.IO) {
+            publisher.publish(message).get()
+        }
+    }
+}
+```
+
+### Controller
+
+```kotlin
+import kotlinx.coroutines.runBlocking
+import org.springframework.http.HttpStatus
+import org.springframework.http.ResponseEntity
+import org.springframework.web.bind.annotation.*
+
+@RestController
+@RequestMapping("/events")
+class CloudEventController(
+    private val cloudEventService: CloudEventService
+) {
+
+    @PostMapping
+    fun handleCloudEvent(
+        @RequestBody cloudEvent: CloudEventRequest
+    ): ResponseEntity<String> = runBlocking {
+        cloudEventService.publishCloudEvent(cloudEvent.type, cloudEvent.data)
+        ResponseEntity.status(HttpStatus.ACCEPTED).body("Event processed")
+    }
+}
+
+data class CloudEventRequest(val type: String, val data: String)
+```
+
+### Explanation
+
+1. **Publisher Factory**: The `getPublisherFactory` bean ensures a new Pub/Sub `Publisher` is created for each topic and cached for reuse.
+2. **Coroutine-Based Publishing**: The `publishCloudEvent` function runs the `publish` call inside a coroutine with `Dispatchers.IO` for non-blocking execution.
+3. **Configuration Driven**: The `application.yml` stores the mappings between CloudEvent types and Pub/Sub topics. Adding a new mapping requires only a config update.
+4. **10 TPS Support**: The reuse of publishers and non-blocking I/O using coroutines optimizes for performance, making 10 TPS achievable.
+
+This setup is lightweight and scalable while ensuring that publishers are reused across requests.
