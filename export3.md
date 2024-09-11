@@ -1,82 +1,116 @@
-In Kotlin with Spring Boot, when you're trying to inject a `Map<String, List<String>>` from the `application.yml` file, the standard approach is to use `@ConfigurationProperties`, not `@Value`, because `@Value` doesn't handle complex types well (like maps or lists). You can resolve this issue by using the following approach:
+If `@ConfigurationProperties` is still not working after following the troubleshooting steps, you can use a more manual approach to construct a `Map` from configuration properties using `Environment` and Kotlin’s utility functions. This approach provides more control and can be useful when dealing with issues related to property binding.
 
-### Steps to Properly Inject `Map<String, List<String>>` from `application.yml`
+### Manual Approach Using `Environment`
 
-1. **Define Configuration in `application.yml`:**
-   
-Make sure your YAML structure is properly formatted. For example:
+You can manually fetch properties from the `Environment` and construct the `Map` as needed. This method involves accessing properties directly and parsing them into the required format.
 
-```yaml
-cloud:
-  pubsub:
-    mappings:
-      topicA: 
-        - eventTypeA1
-        - eventTypeA2
-      topicB: 
-        - eventTypeB1
-        - eventTypeB2
-```
+#### Example Setup
 
-2. **Create a Configuration Class with `@ConfigurationProperties`:**
+1. **Define Properties in `application.yml`**
 
-   You should use `@ConfigurationProperties` to map the YAML properties into a Kotlin data class or a regular class.
+   Ensure your properties are defined in a way that you can easily parse them.
+
+   **Example `application.yml`:**
+
+   ```yaml
+   topics:
+     topic1: eventTypeA,eventTypeB
+     topic2: eventTypeC
+   ```
+
+2. **Create a Service to Parse Properties**
+
+   You can create a service that retrieves and parses these properties from the `Environment` bean.
+
+   **Example Kotlin Service:**
+
+   ```kotlin
+   import org.springframework.core.env.Environment
+   import org.springframework.stereotype.Service
+
+   @Service
+   class TopicsService(private val environment: Environment) {
+
+       fun getTopics(): Map<String, List<String>> {
+           val topicsMap = mutableMapOf<String, List<String>>()
+
+           // Retrieve properties as a list of keys
+           val topicKeys = environment.propertySources
+               .flatMap { ps -> ps.source.keys }
+               .filter { it.startsWith("topics.") }
+               .map { it as String }
+
+           for (key in topicKeys) {
+               val topic = key.substringAfter("topics.")
+               val events = environment.getProperty(key, String::class.java)
+                   ?.split(",")
+                   ?.map { it.trim() }
+                   ?: emptyList()
+
+               topicsMap[topic] = events
+           }
+
+           return topicsMap
+       }
+   }
+   ```
+
+3. **Inject and Use the Service**
+
+   Use the `TopicsService` in your controllers or other components to access the parsed configuration.
+
+   **Example Controller:**
+
+   ```kotlin
+   import org.springframework.web.bind.annotation.GetMapping
+   import org.springframework.web.bind.annotation.RequestMapping
+   import org.springframework.web.bind.annotation.RestController
+
+   @RestController
+   @RequestMapping("/topics")
+   class TopicsController(private val topicsService: TopicsService) {
+
+       @GetMapping
+       fun getTopics(): Map<String, List<String>> {
+           return topicsService.getTopics()
+       }
+   }
+   ```
+
+### Explanation
+
+- **Environment Access:** The `Environment` bean provides access to properties defined in your configuration files. By directly querying it, you can handle properties in a more controlled manner.
+- **Property Parsing:** The `TopicsService` manually retrieves properties, splits them, and constructs a `Map` based on your configuration.
+- **Flexible Parsing:** This approach allows you to handle properties flexibly and can be adjusted according to the format of your configuration.
+
+### Alternative: Use `@Value` with SpEL
+
+If you prefer to keep things simple, you can use Spring Expression Language (SpEL) to directly parse and convert properties in your service or component.
+
+**Example Service Using `@Value`:**
 
 ```kotlin
-import org.springframework.boot.context.properties.ConfigurationProperties
-import org.springframework.stereotype.Component
+import org.springframework.beans.factory.annotation.Value
+import org.springframework.stereotype.Service
 
-@Component
-@ConfigurationProperties(prefix = "cloud.pubsub")
-class PubSubConfig {
-    lateinit var mappings: Map<String, List<String>>
-}
-```
+@Service
+class TopicsService {
 
-In this class, the `mappings` field will be automatically populated from the YAML structure.
+    @Value("\${topics.topic1}")
+    private lateinit var topic1: String
 
-3. **Enable Configuration Properties in Your Application:**
+    @Value("\${topics.topic2}")
+    private lateinit var topic2: String
 
-   You need to make sure that the `@ConfigurationProperties` mechanism is enabled. In a Spring Boot project, you can do this by annotating your main application class with `@EnableConfigurationProperties`, although it is often enabled by default.
-
-```kotlin
-import org.springframework.boot.SpringApplication
-import org.springframework.boot.autoconfigure.SpringBootApplication
-
-@SpringBootApplication
-class Application
-
-fun main(args: Array<String>) {
-    SpringApplication.run(Application::class.java, *args)
-}
-```
-
-4. **Access the Injected Configuration:**
-
-   Now you can inject your `PubSubConfig` class into any Spring component and access the `mappings` field:
-
-```kotlin
-import org.springframework.web.bind.annotation.GetMapping
-import org.springframework.web.bind.annotation.RestController
-
-@RestController
-class CloudEventController(
-    private val pubSubConfig: PubSubConfig
-) {
-
-    @GetMapping("/config")
-    fun getMappings(): Map<String, List<String>> {
-        return pubSubConfig.mappings
+    fun getTopics(): Map<String, List<String>> {
+        return mapOf(
+            "topic1" to topic1.split(",").map { it.trim() },
+            "topic2" to topic2.split(",").map { it.trim() }
+        )
     }
 }
 ```
 
-This controller will return the `mappings` from the `application.yml` file when the `/config` endpoint is accessed.
+### Conclusion
 
-### Important Notes:
-
-- **`lateinit` vs. `var` for Maps:** We use `lateinit var` or `lateinit var mappings: Map<String, List<String>>` in Kotlin to defer the initialization of the `mappings` property until Spring injects it.
-  
-- **Ensure YAML is Correctly Formatted:** Make sure the YAML structure correctly reflects the types you expect. Indentation errors can cause unexpected issues.
-
-By using `@ConfigurationProperties`, you ensure that the YAML is properly parsed and injected into the Kotlin class as expected. This approach works for more complex structures like `Map<String, List<String>>` without needing to handle conversions manually.
+If `@ConfigurationProperties` is not working, manually parsing properties from the `Environment` or using `@Value` with SpEL can be effective alternatives. These methods provide more control and flexibility for constructing configuration data into the required format.
