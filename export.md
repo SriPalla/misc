@@ -1,114 +1,82 @@
-Here’s an optimized approach to implement your Spring Boot Kotlin Cloud Run application without coroutines, supporting 10 TPS. The goal is to map each CloudEvent type to a specific Pub/Sub topic based on `application.yml` and reuse Pub/Sub publishers efficiently:
+To stub a `WebClient` POST request using `mockk` in Kotlin, you can mock the `WebClient` and chain the method calls to simulate a POST request and return a stubbed response.
 
-### 1. Define the Configuration in `application.yml`
-```yaml
-cloudEvent:
-  mappings:
-    - eventType: "event.type.1"
-      pubsubTopic: "topic-1"
-    - eventType: "event.type.2"
-      pubsubTopic: "topic-2"
-```
+Here’s an example of how to do this:
 
-### 2. Create a Configuration Class to Read the Mappings
+### 1. Add dependencies for MockK and WebClient
+
+Make sure you have the following dependencies in your `build.gradle.kts` (for Gradle with Kotlin DSL):
+
 ```kotlin
-import org.springframework.boot.context.properties.ConfigurationProperties
-import org.springframework.context.annotation.Configuration
-
-@Configuration
-@ConfigurationProperties(prefix = "cloudEvent")
-class CloudEventConfig {
-    lateinit var mappings: List<CloudEventMapping>
-
-    data class CloudEventMapping(
-        var eventType: String = "",
-        var pubsubTopic: String = ""
-    )
+testImplementation("io.mockk:mockk:1.13.3") // Use the latest version of MockK
+testImplementation("org.springframework.boot:spring-boot-starter-webflux")
+testImplementation("org.springframework.boot:spring-boot-starter-test") {
+    exclude(group = "org.mockito") // Exclude Mockito to avoid conflicts
 }
 ```
 
-### 3. Pub/Sub Publisher Management
-Ensure each topic has a single, reusable publisher.
+### 2. Mock the WebClient POST request
+
+Here’s an example test case where you mock the `WebClient` to stub a POST request:
+
 ```kotlin
-import com.google.cloud.pubsub.v1.Publisher
-import com.google.pubsub.v1.TopicName
-import org.springframework.stereotype.Service
-import java.util.concurrent.ConcurrentHashMap
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.slot
+import io.mockk.verify
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Test
+import org.springframework.web.reactive.function.BodyInserters
+import org.springframework.web.reactive.function.client.WebClient
+import org.springframework.web.reactive.function.client.WebClientResponseException
+import reactor.core.publisher.Mono
 
-@Service
-class PubSubPublisherManager {
+class WebClientMockkTest {
 
-    private val publishers = ConcurrentHashMap<String, Publisher>()
+    private val webClient: WebClient = mockk()
 
-    fun getOrCreatePublisher(topicName: String): Publisher {
-        return publishers.computeIfAbsent(topicName) {
-            val topic = TopicName.of("your-project-id", topicName)
-            Publisher.newBuilder(topic).build()
-        }
-    }
+    @Test
+    fun `should mock WebClient post request`() {
+        // Mocking the request specification
+        val requestBodySpec: WebClient.RequestBodySpec = mockk()
+        val requestHeadersSpec: WebClient.RequestHeadersSpec<*> = mockk()
+        val responseSpec: WebClient.ResponseSpec = mockk()
 
-    fun shutdownAll() {
-        publishers.values.forEach { it.shutdown() }
-    }
-}
-```
+        // Mocking the WebClient chain
+        every { webClient.post() } returns requestBodySpec
+        every { requestBodySpec.uri(any<String>()) } returns requestBodySpec
+        every { requestBodySpec.body(any<BodyInserters.BodyInserter<*, *>>()) } returns requestHeadersSpec
+        every { requestHeadersSpec.retrieve() } returns responseSpec
 
-### 4. CloudEvent to Pub/Sub Service
-Map the CloudEvent to the corresponding topic and publish the event.
-```kotlin
-import com.google.protobuf.ByteString
-import com.google.pubsub.v1.PubsubMessage
-import org.springframework.stereotype.Service
+        // Mocking the response
+        val expectedResponse = "Response"
+        every { responseSpec.bodyToMono(String::class.java) } returns Mono.just(expectedResponse)
 
-@Service
-class CloudEventPubSubService(
-    private val cloudEventConfig: CloudEventConfig,
-    private val publisherManager: PubSubPublisherManager
-) {
+        // Code under test
+        val actualResponse = webClient.post()
+            .uri("/test-endpoint")
+            .body(BodyInserters.fromValue("Request Body"))
+            .retrieve()
+            .bodyToMono(String::class.java)
+            .block()
 
-    fun publishCloudEvent(cloudEventType: String, cloudEventData: String) {
-        val mapping = cloudEventConfig.mappings
-            .find { it.eventType == cloudEventType }
-            ?: throw IllegalArgumentException("No mapping found for CloudEvent type: $cloudEventType")
+        // Assertions
+        assertEquals(expectedResponse, actualResponse)
 
-        val publisher = publisherManager.getOrCreatePublisher(mapping.pubsubTopic)
-
-        val message = PubsubMessage.newBuilder()
-            .setData(ByteString.copyFromUtf8(cloudEventData))
-            .build()
-
-        publisher.publish(message)
+        // Verify the interaction
+        verify { webClient.post() }
+        verify { requestBodySpec.uri("/test-endpoint") }
+        verify { requestBodySpec.body(any<BodyInserters.BodyInserter<*, *>>()) }
+        verify { requestHeadersSpec.retrieve() }
+        verify { responseSpec.bodyToMono(String::class.java) }
     }
 }
 ```
 
-### 5. API Endpoint for Receiving CloudEvents
-This exposes the API to receive CloudEvents, determine the event type, and publish to the appropriate Pub/Sub topic.
-```kotlin
-import org.springframework.web.bind.annotation.*
+### Explanation:
 
-@RestController
-@RequestMapping("/api/cloudEvent")
-class CloudEventController(
-    private val cloudEventPubSubService: CloudEventPubSubService
-) {
+1. **Mock WebClient components**: `mockk()` is used to mock `WebClient`, `RequestBodySpec`, `RequestHeadersSpec`, and `ResponseSpec`.
+2. **Stub method calls**: Use `every { ... } returns ...` to mock method calls in the WebClient chain.
+3. **Simulate response**: We return `Mono.just(expectedResponse)` from the `bodyToMono` method to simulate the response.
+4. **Verify interactions**: After the test runs, use `verify { ... }` to ensure that the WebClient's methods were called with the expected parameters.
 
-    @PostMapping
-    fun handleCloudEvent(@RequestBody cloudEvent: CloudEventRequest) {
-        cloudEventPubSubService.publishCloudEvent(cloudEvent.type, cloudEvent.data)
-    }
-
-    data class CloudEventRequest(
-        val type: String,
-        val data: String
-    )
-}
-```
-
-### Key Points
-- **Publisher Reuse**: Publishers are created once per topic and stored in a `ConcurrentHashMap`, avoiding the overhead of creating a new publisher for every message.
-- **Configuration Flexibility**: Adding new event types and topics is as simple as updating the `application.yml`.
-- **Thread Safety**: Using `ConcurrentHashMap` ensures thread-safe access to publishers.
-- **Performance**: The design should handle 10 TPS without performance issues, as the publisher creation overhead is avoided after the first message for a topic.
-
-This solution should be scalable and optimized for your use case without using coroutines.
+This approach allows you to fully stub and control the behavior of the `WebClient` for testing purposes using `mockk`.
