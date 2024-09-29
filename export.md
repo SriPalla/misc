@@ -1,82 +1,103 @@
-To stub a `WebClient` POST request using `mockk` in Kotlin, you can mock the `WebClient` and chain the method calls to simulate a POST request and return a stubbed response.
+To mock the `WebClient` in the `getAppToken()` function as seen in your image, you can follow the approach below. I'll guide you on how to mock the `WebClient` using `mockk` to stub the POST request and return a mocked response in a test scenario.
 
-Here’s an example of how to do this:
+### Example:
 
-### 1. Add dependencies for MockK and WebClient
+Given the function `getAppToken()` makes a `POST` request using `WebClient`, you can mock the interactions with `mockk` like this:
 
-Make sure you have the following dependencies in your `build.gradle.kts` (for Gradle with Kotlin DSL):
+### Step 1: Setup mockk and WebClient
+
+Assuming you have the following setup in your `build.gradle.kts` for `mockk` and Spring WebFlux:
 
 ```kotlin
-testImplementation("io.mockk:mockk:1.13.3") // Use the latest version of MockK
+testImplementation("io.mockk:mockk:1.13.3") // Use latest version
 testImplementation("org.springframework.boot:spring-boot-starter-webflux")
 testImplementation("org.springframework.boot:spring-boot-starter-test") {
-    exclude(group = "org.mockito") // Exclude Mockito to avoid conflicts
+    exclude(group = "org.mockito")
 }
 ```
 
-### 2. Mock the WebClient POST request
+### Step 2: Mock the `WebClient` calls
 
-Here’s an example test case where you mock the `WebClient` to stub a POST request:
+Here’s a test where we mock the `WebClient` to simulate a response for `getAppToken()`:
 
 ```kotlin
 import io.mockk.every
 import io.mockk.mockk
-import io.mockk.slot
 import io.mockk.verify
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import org.springframework.web.reactive.function.BodyInserters
 import org.springframework.web.reactive.function.client.WebClient
-import org.springframework.web.reactive.function.client.WebClientResponseException
 import reactor.core.publisher.Mono
 
 class WebClientMockkTest {
 
-    private val webClient: WebClient = mockk()
+    private val appTokenWebClient: WebClient = mockk()
 
     @Test
-    fun `should mock WebClient post request`() {
-        // Mocking the request specification
+    fun `should mock WebClient post request for getAppToken`() {
+        // Mocking the request spec, headers spec, and response spec
         val requestBodySpec: WebClient.RequestBodySpec = mockk()
         val requestHeadersSpec: WebClient.RequestHeadersSpec<*> = mockk()
         val responseSpec: WebClient.ResponseSpec = mockk()
 
-        // Mocking the WebClient chain
-        every { webClient.post() } returns requestBodySpec
+        // Mocking the WebClient call chain
+        every { appTokenWebClient.post() } returns requestBodySpec
         every { requestBodySpec.uri(any<String>()) } returns requestBodySpec
         every { requestBodySpec.body(any<BodyInserters.BodyInserter<*, *>>()) } returns requestHeadersSpec
         every { requestHeadersSpec.retrieve() } returns responseSpec
 
-        // Mocking the response
-        val expectedResponse = "Response"
-        every { responseSpec.bodyToMono(String::class.java) } returns Mono.just(expectedResponse)
+        // Simulating a response
+        val tokenResponse = TokenResponse("mockAccessToken", 3600)
+        every { responseSpec.bodyToMono(TokenResponse::class.java) } returns Mono.just(tokenResponse)
 
-        // Code under test
-        val actualResponse = webClient.post()
-            .uri("/test-endpoint")
-            .body(BodyInserters.fromValue("Request Body"))
-            .retrieve()
-            .bodyToMono(String::class.java)
-            .block()
+        // Call the actual function to test
+        val actualResponse = getAppToken()
 
-        // Assertions
-        assertEquals(expectedResponse, actualResponse)
+        // Assert the response
+        assertEquals("mockAccessToken", actualResponse.first)
+        assertEquals(3600, actualResponse.second)
 
-        // Verify the interaction
-        verify { webClient.post() }
-        verify { requestBodySpec.uri("/test-endpoint") }
+        // Verify interactions
+        verify { appTokenWebClient.post() }
+        verify { requestBodySpec.uri(any<String>()) }
         verify { requestBodySpec.body(any<BodyInserters.BodyInserter<*, *>>()) }
         verify { requestHeadersSpec.retrieve() }
-        verify { responseSpec.bodyToMono(String::class.java) }
+        verify { responseSpec.bodyToMono(TokenResponse::class.java) }
     }
+
+    // Simulated getAppToken function similar to the image
+    private fun getAppToken(): Pair<String, Int> {
+        val appTokenResponse = appTokenWebClient.post()
+            .uri("your-uri")
+            .body(BodyInserters.fromFormData("name", "grant_type")
+                .with("client_id", "client_id")
+                .with("client_secret", "client_secret")
+                .with("scope", "scope"))
+            .retrieve()
+            .bodyToMono(TokenResponse::class.java)
+            .block()!!
+
+        return Pair(appTokenResponse.accessToken, appTokenResponse.expiresIn)
+    }
+
+    data class TokenResponse(val accessToken: String, val expiresIn: Int)
 }
 ```
 
 ### Explanation:
 
-1. **Mock WebClient components**: `mockk()` is used to mock `WebClient`, `RequestBodySpec`, `RequestHeadersSpec`, and `ResponseSpec`.
-2. **Stub method calls**: Use `every { ... } returns ...` to mock method calls in the WebClient chain.
-3. **Simulate response**: We return `Mono.just(expectedResponse)` from the `bodyToMono` method to simulate the response.
-4. **Verify interactions**: After the test runs, use `verify { ... }` to ensure that the WebClient's methods were called with the expected parameters.
+1. **Mocking the WebClient Chain**: 
+   - `appTokenWebClient.post()` is mocked to return `requestBodySpec`.
+   - `requestBodySpec.uri()` and `requestBodySpec.body()` are mocked to return the next chain link.
+   - `requestHeadersSpec.retrieve()` returns `responseSpec`.
+   - `responseSpec.bodyToMono()` returns a `Mono.just(tokenResponse)` with the mocked `TokenResponse`.
 
-This approach allows you to fully stub and control the behavior of the `WebClient` for testing purposes using `mockk`.
+2. **Simulated Response**: 
+   - `TokenResponse("mockAccessToken", 3600)` is returned as the mocked response, simulating the `bodyToMono()` call in your `getAppToken()` function.
+
+3. **Assertions and Verifications**: 
+   - You assert that the function returns the expected access token and expiry time.
+   - You verify the WebClient interactions using `verify`.
+
+This approach allows you to test your `getAppToken()` function using `mockk` to stub the `WebClient` POST request and return a mocked response.
