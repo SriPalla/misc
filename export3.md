@@ -1,102 +1,176 @@
-To handle `IllegalArgumentException` in a Spring Boot Kotlin application with a `ControllerAdvice` that logs warnings and returns success while capturing details from the request body (which is a `CloudEvent`), here’s a complete example. This will show how to implement exception handling, log the request details, and ensure the flow continues with a success response.
+To create a reusable Spring Boot library for SFTP using the `JSch` library, you can build a standalone library (JAR) that provides configurable beans to manage SFTP connections and file uploads. The beans can then be imported and used in other Spring Boot applications.
 
-### 1. Add Dependencies
-Make sure you have the required dependencies in your `build.gradle.kts`:
+### Step 1: Set Up the Gradle Project
+
+1. Create a new Gradle project.
+2. Define the necessary dependencies in `build.gradle.kts`.
+
+```kotlin
+plugins {
+    kotlin("jvm") version "1.8.21"
+    id("org.springframework.boot") version "3.3.3"
+    id("io.spring.dependency-management") version "1.1.0"
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation("org.springframework.boot:spring-boot-starter")
+    implementation("org.springframework.boot:spring-boot-starter-configuration-processor")
+    implementation("com.jcraft:jsch:0.1.55")
+}
+```
+
+### Step 2: Create SFTP Configuration Properties
+
+Define a configuration properties class that can be used to inject SFTP settings into the Spring Boot application. Create `SftpProperties.kt`:
+
+```kotlin
+package com.example.sftp
+
+import org.springframework.boot.context.properties.ConfigurationProperties
+import org.springframework.stereotype.Component
+
+@Component
+@ConfigurationProperties(prefix = "sftp")
+data class SftpProperties(
+    var host: String? = null,
+    var port: Int = 22,
+    var username: String? = null,
+    var password: String? = null,
+    var remoteDirectory: String = "/"
+)
+```
+
+### Step 3: Create SFTP Connection Factory
+
+Create an SFTP connection factory to manage SFTP sessions using JSch. This bean will be reusable across multiple Spring Boot applications. Create `SftpConnectionFactory.kt`:
+
+```kotlin
+package com.example.sftp
+
+import com.jcraft.jsch.ChannelSftp
+import com.jcraft.jsch.JSch
+import com.jcraft.jsch.Session
+import org.springframework.stereotype.Component
+
+@Component
+class SftpConnectionFactory(private val sftpProperties: SftpProperties) {
+
+    fun createSession(): ChannelSftp {
+        val jsch = JSch()
+        val session = jsch.getSession(sftpProperties.username, sftpProperties.host, sftpProperties.port)
+        session.setPassword(sftpProperties.password)
+        session.setConfig("StrictHostKeyChecking", "no") // Disable host key checking for simplicity
+        session.connect()
+
+        val channel = session.openChannel("sftp") as ChannelSftp
+        channel.connect()
+        return channel
+    }
+
+    fun disconnectSession(channelSftp: ChannelSftp) {
+        channelSftp.disconnect()
+        channelSftp.session.disconnect()
+    }
+}
+```
+
+### Step 4: Create SFTP Service for File Upload
+
+Create a service that uploads files to the SFTP server. This service will use the `SftpConnectionFactory` to manage connections. Create `SftpService.kt`:
+
+```kotlin
+package com.example.sftp
+
+import com.jcraft.jsch.ChannelSftp
+import org.springframework.stereotype.Service
+import java.io.File
+import java.io.InputStream
+
+@Service
+class SftpService(private val sftpConnectionFactory: SftpConnectionFactory) {
+
+    fun uploadFile(localFile: File, remoteFileName: String, remoteDirectory: String? = null) {
+        val remoteDir = remoteDirectory ?: sftpConnectionFactory.sftpProperties.remoteDirectory
+        val channelSftp = sftpConnectionFactory.createSession()
+        
+        try {
+            channelSftp.cd(remoteDir)
+            channelSftp.put(localFile.absolutePath, remoteFileName)
+        } finally {
+            sftpConnectionFactory.disconnectSession(channelSftp)
+        }
+    }
+
+    fun uploadFile(inputStream: InputStream, remoteFileName: String, remoteDirectory: String? = null) {
+        val remoteDir = remoteDirectory ?: sftpConnectionFactory.sftpProperties.remoteDirectory
+        val channelSftp = sftpConnectionFactory.createSession()
+
+        try {
+            channelSftp.cd(remoteDir)
+            channelSftp.put(inputStream, remoteFileName)
+        } finally {
+            sftpConnectionFactory.disconnectSession(channelSftp)
+        }
+    }
+}
+```
+
+### Step 5: Configure SFTP Properties in the Application
+
+You will need to specify the SFTP credentials and other configurations in `application.yml`:
+
+```yaml
+sftp:
+  host: your-sftp-host
+  port: 22
+  username: your-username
+  password: your-password
+  remoteDirectory: /optional/remote/directory
+```
+
+### Step 6: Package the Library
+
+Package the library as a JAR by running the following Gradle command:
+
+```bash
+./gradlew build
+```
+
+The resulting JAR can now be included in any other Spring Boot application.
+
+### Step 7: Use the Library in Another Spring Boot Application
+
+To use the library in another Spring Boot application, you can include the JAR in your `build.gradle.kts` dependencies. Suppose you've published your JAR to a local Maven repository or a central one.
 
 ```kotlin
 dependencies {
-    implementation("org.springframework.boot:spring-boot-starter-web")
-    implementation("org.springframework.boot:spring-boot-starter-actuator")
-    implementation("org.springframework.boot:spring-boot-starter-logging")
-    implementation("io.cloudevents:cloudevents-spring:2.3.0") // CloudEvent support
+    implementation("com.example.sftp:sftp-library:1.0.0") // Replace with actual coordinates
 }
 ```
 
-### 2. Create a CloudEvent Controller
-The controller will receive a `POST` request with a `CloudEvent` in the body.
+You can then inject the `SftpService` bean and use it to upload files:
 
 ```kotlin
-import io.cloudevents.CloudEvent
-import org.springframework.http.ResponseEntity
-import org.springframework.web.bind.annotation.PostMapping
-import org.springframework.web.bind.annotation.RequestBody
-import org.springframework.web.bind.annotation.RestController
+package com.example.app
 
-@RestController
-class CloudEventController {
+import com.example.sftp.SftpService
+import org.springframework.boot.CommandLineRunner
+import org.springframework.stereotype.Component
+import java.io.File
 
-    @PostMapping("/cloudevent")
-    fun handleCloudEvent(@RequestBody cloudEvent: CloudEvent): ResponseEntity<String> {
-        if (cloudEvent.id.isNullOrEmpty()) {
-            throw IllegalArgumentException("CloudEvent ID must not be null or empty")
-        }
-        // Process CloudEvent
-        return ResponseEntity.ok("CloudEvent processed successfully")
+@Component
+class AppRunner(private val sftpService: SftpService) : CommandLineRunner {
+    override fun run(vararg args: String?) {
+        val localFile = File("path/to/local/file.txt") // Replace with your local file path
+        sftpService.uploadFile(localFile, "uploaded_file.txt")
     }
 }
 ```
 
-### 3. Define a ControllerAdvice for Exception Handling
-The `ControllerAdvice` will handle the `IllegalArgumentException`, log the details from the `CloudEvent`, and return a success response.
+### Summary
 
-```kotlin
-import io.cloudevents.CloudEvent
-import org.slf4j.LoggerFactory
-import org.springframework.http.HttpStatus
-import org.springframework.http.ResponseEntity
-import org.springframework.web.bind.annotation.ControllerAdvice
-import org.springframework.web.bind.annotation.ExceptionHandler
-import org.springframework.web.bind.annotation.RequestBody
-import org.springframework.web.bind.annotation.RestController
-
-@ControllerAdvice
-@RestController
-class GlobalExceptionHandler {
-
-    private val logger = LoggerFactory.getLogger(GlobalExceptionHandler::class.java)
-
-    @ExceptionHandler(IllegalArgumentException::class)
-    fun handleIllegalArgumentException(
-        ex: IllegalArgumentException, 
-        @RequestBody cloudEvent: CloudEvent?
-    ): ResponseEntity<String> {
-        // Log a warning with details
-        logger.warn("IllegalArgumentException: ${ex.message}. CloudEvent details: id=${cloudEvent?.id}, type=${cloudEvent?.type}, source=${cloudEvent?.source}")
-
-        // Return success response despite the error
-        return ResponseEntity.status(HttpStatus.OK).body("Warning: ${ex.message}, but proceeding with success")
-    }
-}
-```
-
-### Explanation
-- **`CloudEventController`**: This defines a POST endpoint that accepts `CloudEvent` in the request body. If the `id` field is missing or empty, it throws an `IllegalArgumentException`.
-- **`GlobalExceptionHandler`**: The `ControllerAdvice` catches the `IllegalArgumentException`, logs a warning with the request's `CloudEvent` details, and returns a success response (`200 OK`) with a message indicating the warning.
-- **`Logger`**: The `SLF4J` logger logs the warning at the `WARN` level.
-
-### 4. Application Configuration
-Ensure your application is configured to handle exceptions and log appropriately. You can also configure logging levels in `application.yml`:
-
-```yaml
-logging:
-  level:
-    root: INFO
-    com.example: WARN
-```
-
-### Testing with `curl`
-You can test the API with the following `curl` command:
-
-```bash
-curl -X POST http://localhost:8080/cloudevent \
-  -H "Content-Type: application/json" \
-  -d '{
-        "id": "",
-        "type": "com.example.event",
-        "source": "/my/source"
-      }'
-```
-
-This will trigger the `IllegalArgumentException` and return a response with a warning, but still allow the flow to continue as successful.
-
-Let me know if you need further details!
+This approach creates a reusable SFTP service using `JSch` that can be packaged as a Spring Boot library (JAR). The library includes an SFTP connection factory and a service for uploading files. The credentials and default remote directory are configurable via `application.yml`. Once packaged, the library can be imported and used in any other Spring Boot application.
