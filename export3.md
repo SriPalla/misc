@@ -1,127 +1,70 @@
-To create a reusable Spring Boot library for SFTP using the `JSch` library, you can build a standalone library (JAR) that provides configurable beans to manage SFTP connections and file uploads. The beans can then be imported and used in other Spring Boot applications.
+To enforce properties to be defined in the `application.yml` file for a Spring Boot JAR that will be included in other projects, you can follow these steps. The goal is to make sure that the required properties are provided and raise an error if they are missing. This can be achieved using `@ConfigurationProperties` with validation annotations and integrating with Spring Boot’s property validation mechanisms.
 
-### Step 1: Set Up the Gradle Project
+### 1. Use `@ConfigurationProperties` with Validation
 
-1. Create a new Gradle project.
-2. Define the necessary dependencies in `build.gradle.kts`.
+You can define a configuration properties class that will load the properties from the `application.yml` file. To enforce that specific properties are provided, you can use validation annotations such as `@NotNull`.
+
+First, add the necessary dependencies for validation in your `build.gradle.kts`:
 
 ```kotlin
-plugins {
-    kotlin("jvm") version "1.8.21"
-    id("org.springframework.boot") version "3.3.3"
-    id("io.spring.dependency-management") version "1.1.0"
-}
-
-repositories {
-    mavenCentral()
-}
-
 dependencies {
+    implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.springframework.boot:spring-boot-starter")
-    implementation("org.springframework.boot:spring-boot-starter-configuration-processor")
-    implementation("com.jcraft:jsch:0.1.55")
 }
 ```
 
-### Step 2: Create SFTP Configuration Properties
+### 2. Create the Configuration Properties Class with Validation
 
-Define a configuration properties class that can be used to inject SFTP settings into the Spring Boot application. Create `SftpProperties.kt`:
+Define a configuration properties class that reads and validates the required properties. Use `@NotNull` or other validation annotations to enforce the presence of required properties.
+
+For example, create a `SftpProperties.kt` class with validation:
 
 ```kotlin
 package com.example.sftp
 
 import org.springframework.boot.context.properties.ConfigurationProperties
-import org.springframework.stereotype.Component
+import org.springframework.validation.annotation.Validated
+import jakarta.validation.constraints.NotNull
 
-@Component
+@Validated
 @ConfigurationProperties(prefix = "sftp")
 data class SftpProperties(
+    @field:NotNull(message = "SFTP host must be defined")
     var host: String? = null,
-    var port: Int = 22,
+
+    @field:NotNull(message = "SFTP port must be defined")
+    var port: Int? = null,
+
+    @field:NotNull(message = "SFTP username must be defined")
     var username: String? = null,
+
+    @field:NotNull(message = "SFTP password must be defined")
     var password: String? = null,
+
     var remoteDirectory: String = "/"
 )
 ```
 
-### Step 3: Create SFTP Connection Factory
+In this class, fields like `host`, `port`, `username`, and `password` are annotated with `@NotNull`. If any of these properties are missing in the `application.yml` file, Spring Boot will throw a validation error during startup.
 
-Create an SFTP connection factory to manage SFTP sessions using JSch. This bean will be reusable across multiple Spring Boot applications. Create `SftpConnectionFactory.kt`:
+### 3. Enable Configuration Properties in a Spring Configuration Class
 
-```kotlin
-package com.example.sftp
-
-import com.jcraft.jsch.ChannelSftp
-import com.jcraft.jsch.JSch
-import com.jcraft.jsch.Session
-import org.springframework.stereotype.Component
-
-@Component
-class SftpConnectionFactory(private val sftpProperties: SftpProperties) {
-
-    fun createSession(): ChannelSftp {
-        val jsch = JSch()
-        val session = jsch.getSession(sftpProperties.username, sftpProperties.host, sftpProperties.port)
-        session.setPassword(sftpProperties.password)
-        session.setConfig("StrictHostKeyChecking", "no") // Disable host key checking for simplicity
-        session.connect()
-
-        val channel = session.openChannel("sftp") as ChannelSftp
-        channel.connect()
-        return channel
-    }
-
-    fun disconnectSession(channelSftp: ChannelSftp) {
-        channelSftp.disconnect()
-        channelSftp.session.disconnect()
-    }
-}
-```
-
-### Step 4: Create SFTP Service for File Upload
-
-Create a service that uploads files to the SFTP server. This service will use the `SftpConnectionFactory` to manage connections. Create `SftpService.kt`:
+Make sure to enable your `@ConfigurationProperties` class in the configuration. You can do this by using the `@EnableConfigurationProperties` annotation in your configuration class or Spring Boot application class:
 
 ```kotlin
 package com.example.sftp
 
-import com.jcraft.jsch.ChannelSftp
-import org.springframework.stereotype.Service
-import java.io.File
-import java.io.InputStream
+import org.springframework.boot.context.properties.EnableConfigurationProperties
+import org.springframework.context.annotation.Configuration
 
-@Service
-class SftpService(private val sftpConnectionFactory: SftpConnectionFactory) {
-
-    fun uploadFile(localFile: File, remoteFileName: String, remoteDirectory: String? = null) {
-        val remoteDir = remoteDirectory ?: sftpConnectionFactory.sftpProperties.remoteDirectory
-        val channelSftp = sftpConnectionFactory.createSession()
-        
-        try {
-            channelSftp.cd(remoteDir)
-            channelSftp.put(localFile.absolutePath, remoteFileName)
-        } finally {
-            sftpConnectionFactory.disconnectSession(channelSftp)
-        }
-    }
-
-    fun uploadFile(inputStream: InputStream, remoteFileName: String, remoteDirectory: String? = null) {
-        val remoteDir = remoteDirectory ?: sftpConnectionFactory.sftpProperties.remoteDirectory
-        val channelSftp = sftpConnectionFactory.createSession()
-
-        try {
-            channelSftp.cd(remoteDir)
-            channelSftp.put(inputStream, remoteFileName)
-        } finally {
-            sftpConnectionFactory.disconnectSession(channelSftp)
-        }
-    }
-}
+@Configuration
+@EnableConfigurationProperties(SftpProperties::class)
+class SftpConfig
 ```
 
-### Step 5: Configure SFTP Properties in the Application
+### 4. Define the Required Properties in `application.yml`
 
-You will need to specify the SFTP credentials and other configurations in `application.yml`:
+In any Spring Boot project that includes your JAR, you’ll need to define the required properties in the `application.yml` file. If the properties are not provided, Spring Boot will fail to start with an error message indicating which properties are missing.
 
 ```yaml
 sftp:
@@ -132,45 +75,47 @@ sftp:
   remoteDirectory: /optional/remote/directory
 ```
 
-### Step 6: Package the Library
+### 5. Handle Missing Properties
 
-Package the library as a JAR by running the following Gradle command:
+When properties are missing or invalid, Spring Boot will fail the startup with a descriptive message. For example, if the `host` property is missing, the startup error will look like this:
 
-```bash
-./gradlew build
+```
+javax.validation.ConstraintViolationException: Validation failed for classes [com.example.sftp.SftpProperties] during startup. 
+Property: sftp.host
+Message: SFTP host must be defined
 ```
 
-The resulting JAR can now be included in any other Spring Boot application.
+This ensures that the application won’t start unless all required properties are provided.
 
-### Step 7: Use the Library in Another Spring Boot Application
+### 6. Optionally Provide Default Values
 
-To use the library in another Spring Boot application, you can include the JAR in your `build.gradle.kts` dependencies. Suppose you've published your JAR to a local Maven repository or a central one.
+If certain properties are optional, you can provide default values in the configuration properties class:
 
 ```kotlin
-dependencies {
-    implementation("com.example.sftp:sftp-library:1.0.0") // Replace with actual coordinates
-}
+data class SftpProperties(
+    @field:NotNull(message = "SFTP host must be defined")
+    var host: String? = null,
+
+    @field:NotNull(message = "SFTP port must be defined")
+    var port: Int? = 22, // Default value
+
+    @field:NotNull(message = "SFTP username must be defined")
+    var username: String? = null,
+
+    @field:NotNull(message = "SFTP password must be defined")
+    var password: String? = null,
+
+    var remoteDirectory: String = "/" // Default value
+)
 ```
 
-You can then inject the `SftpService` bean and use it to upload files:
-
-```kotlin
-package com.example.app
-
-import com.example.sftp.SftpService
-import org.springframework.boot.CommandLineRunner
-import org.springframework.stereotype.Component
-import java.io.File
-
-@Component
-class AppRunner(private val sftpService: SftpService) : CommandLineRunner {
-    override fun run(vararg args: String?) {
-        val localFile = File("path/to/local/file.txt") // Replace with your local file path
-        sftpService.uploadFile(localFile, "uploaded_file.txt")
-    }
-}
-```
+This way, if the `port` or `remoteDirectory` properties are not provided in `application.yml`, the defaults will be used.
 
 ### Summary
 
-This approach creates a reusable SFTP service using `JSch` that can be packaged as a Spring Boot library (JAR). The library includes an SFTP connection factory and a service for uploading files. The credentials and default remote directory are configurable via `application.yml`. Once packaged, the library can be imported and used in any other Spring Boot application.
+1. **Use `@ConfigurationProperties` with validation annotations** (`@NotNull`, etc.) to enforce required properties.
+2. **Enable configuration properties** using `@EnableConfigurationProperties` in your configuration class.
+3. **Define required properties** in `application.yml` when including the JAR in other applications.
+4. If any required properties are missing, Spring Boot will fail to start with an appropriate validation error message.
+
+This approach ensures that properties required for your JAR are properly enforced across all applications using it.
