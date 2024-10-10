@@ -1,136 +1,113 @@
-To create a reusable JAR in Kotlin for a Spring Boot project that connects to an SFTP server to upload files, you can follow these steps. The credentials will be read from application properties, and if no remote directory is passed during the upload, it will default to `/`.
+Here’s a guide to writing a **JUnit 5** test using **MockK** for the `uploadFile` function in Kotlin. The test will mock the `SftpConnectionFactory` and the `ChannelSftp` so that the SFTP operations can be tested in isolation without making actual connections.
 
-### Step-by-Step Guide:
+### Key Steps:
+1. **Mock `SftpConnectionFactory` and `ChannelSftp`**.
+2. **Mock the behavior of `cd` (change directory) and `put` (upload file)**.
+3. **Verify that the correct interactions occur**.
+4. **Handle the `use` block behavior by ensuring the mock can be "closed" properly**.
 
-#### 1. Add Dependencies to `build.gradle.kts`
-You'll need the necessary dependencies for the SFTP connection and Spring Boot.
-
-```kotlin
-plugins {
-    id("org.springframework.boot") version "3.2.0"
-    id("io.spring.dependency-management") version "1.1.0"
-    kotlin("jvm") version "1.8.21"
-    kotlin("plugin.spring") version "1.8.21"
-}
-
-dependencies {
-    implementation("org.springframework.boot:spring-boot-starter")
-    implementation("org.springframework.boot:spring-boot-starter-integration")
-    implementation("org.springframework.integration:spring-integration-sftp")
-    implementation("com.jcraft:jsch:0.1.55") // SFTP library
-    implementation("org.jetbrains.kotlin:kotlin-reflect")
-    implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8")
-}
-
-java {
-    sourceCompatibility = JavaVersion.VERSION_17
-    targetCompatibility = JavaVersion.VERSION_17
-}
-```
-
-#### 2. Create Configuration Class for SFTP
-This class will configure the SFTP session factory and gateway to handle file uploads.
+### Code Implementation
 
 ```kotlin
 import com.jcraft.jsch.ChannelSftp
-import org.springframework.context.annotation.Bean
-import org.springframework.context.annotation.Configuration
-import org.springframework.integration.annotation.IntegrationComponentScan
-import org.springframework.integration.file.remote.session.SessionFactory
-import org.springframework.integration.sftp.session.DefaultSftpSessionFactory
+import io.mockk.*
+import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.Test
+import java.io.File
 
-@Configuration
-@IntegrationComponentScan
-class SftpConfig {
+class SftpUploadTest {
 
-    @Bean
-    fun sftpSessionFactory(): SessionFactory<ChannelSftp.LsEntry> {
-        val factory = DefaultSftpSessionFactory(true)
-        factory.setHost("your.sftp.host") // or read from application.yml
-        factory.setPort(22)
-        factory.setUser("your-username")
-        factory.setPassword("your-password")
-        factory.setAllowUnknownKeys(true)
-        return factory
+    // Mock SftpConnectionFactory and ChannelSftp
+    private val sftpConnectionFactory = mockk<SftpConnectionFactory>(relaxed = true)
+    private val channelSftp = mockk<ChannelSftp>(relaxed = true)
+
+    @Test
+    fun `should upload file to SFTP server with default remote directory`() {
+        // Arrange: Set up the mocks
+        val localFile = File("testfile.txt")
+        val remoteFileName = "remoteFile.txt"
+        val defaultRemoteDirectory = "/default-directory"
+
+        // Mock the behavior of the factory and channel
+        every { sftpConnectionFactory.getChannel() } returns channelSftp
+        every { channelSftp.remoteDirectory } returns defaultRemoteDirectory
+
+        // Act: Call the uploadFile function
+        uploadFile(localFile, remoteFileName, null, sftpConnectionFactory)
+
+        // Assert: Verify interactions with the mocks
+        verify {
+            sftpConnectionFactory.getChannel() // Channel should be retrieved
+            channelSftp.cd(defaultRemoteDirectory) // Should change to the default remote directory
+            channelSftp.put(localFile.absolutePath, remoteFileName) // Should upload the file
+        }
+        verify(exactly = 1) { sftpConnectionFactory.close() } // Verify that the factory is closed
+    }
+
+    @Test
+    fun `should upload file to SFTP server with specified remote directory`() {
+        // Arrange: Set up the mocks
+        val localFile = File("testfile.txt")
+        val remoteFileName = "remoteFile.txt"
+        val specifiedRemoteDirectory = "/specified-directory"
+
+        every { sftpConnectionFactory.getChannel() } returns channelSftp
+
+        // Act: Call the uploadFile function with a specified directory
+        uploadFile(localFile, remoteFileName, specifiedRemoteDirectory, sftpConnectionFactory)
+
+        // Assert: Verify that the correct directory and upload calls are made
+        verify {
+            sftpConnectionFactory.getChannel()
+            channelSftp.cd(specifiedRemoteDirectory) // Should use the specified directory
+            channelSftp.put(localFile.absolutePath, remoteFileName) // Should upload the file
+        }
+        verify(exactly = 1) { sftpConnectionFactory.close() }
+    }
+
+    @Test
+    fun `should throw runtime exception if file upload fails`() {
+        // Arrange: Set up the mocks and make the upload fail
+        val localFile = File("testfile.txt")
+        val remoteFileName = "remoteFile.txt"
+        val defaultRemoteDirectory = "/default-directory"
+
+        every { sftpConnectionFactory.getChannel() } returns channelSftp
+        every { channelSftp.remoteDirectory } returns defaultRemoteDirectory
+
+        // Simulate an exception during the upload
+        every { channelSftp.put(localFile.absolutePath, remoteFileName) } throws RuntimeException("SFTP failure")
+
+        // Act & Assert: Expect a RuntimeException to be thrown
+        val exception = assertThrows<RuntimeException> {
+            uploadFile(localFile, remoteFileName, null, sftpConnectionFactory)
+        }
+
+        // Assert that the exception contains the correct message
+        assertEquals("Failed to upload file to SFTP", exception.message)
+
+        // Verify that the factory is still closed even if an exception occurs
+        verify(exactly = 1) { sftpConnectionFactory.close() }
     }
 }
 ```
 
-#### 3. Create the SFTP Gateway Interface
+### Explanation of Key Parts:
 
-```kotlin
-import org.springframework.integration.annotation.MessagingGateway
-import org.springframework.integration.file.remote.gateway.AbstractRemoteFileOutboundGateway
-import org.springframework.messaging.handler.annotation.Payload
-import java.io.File
+1. **Mock Setup**:
+   - `mockk<SftpConnectionFactory>(relaxed = true)`: We mock the `SftpConnectionFactory` and the `ChannelSftp` objects. The `relaxed = true` ensures that any unstubbed method calls will return the default value for the type (like null for objects).
+   - `every { sftpConnectionFactory.getChannel() } returns channelSftp`: This mocks the behavior where calling `getChannel()` on the `SftpConnectionFactory` returns the mocked `ChannelSftp`.
 
-@MessagingGateway
-interface SftpGateway {
+2. **Default Directory Handling**:
+   - If `remoteDirectory` is not passed, we mock the default remote directory using `every { channelSftp.remoteDirectory } returns "/default-directory"`.
 
-    @AbstractRemoteFileOutboundGateway.Command("put")
-    fun uploadToSftp(@Payload file: File, remoteDir: String = "/")
-}
-```
+3. **Verifications**:
+   - We use `verify` to ensure that the correct methods were called, e.g., `channelSftp.cd()` to change directories and `channelSftp.put()` to upload the file.
+   - We also verify that the `use` block (i.e., autoclosable behavior) works by verifying that `sftpConnectionFactory.close()` is called exactly once.
 
-#### 4. Create the Service to Handle File Upload
-This service will be responsible for uploading files to the SFTP server.
+4. **Exception Handling**:
+   - In the third test, we simulate an exception using `throws RuntimeException("SFTP failure")` and verify that the exception is properly caught and rethrown with the appropriate message.
 
-```kotlin
-import org.springframework.beans.factory.annotation.Autowired
-import org.springframework.stereotype.Service
-import java.io.File
-
-@Service
-class SftpService @Autowired constructor(private val sftpGateway: SftpGateway) {
-
-    fun uploadFile(file: File, remoteDir: String? = null) {
-        val directory = remoteDir ?: "/"
-        sftpGateway.uploadToSftp(file, directory)
-    }
-}
-```
-
-#### 5. Application Properties
-You can store the credentials and other configuration properties in the `application.yml` file.
-
-```yaml
-sftp:
-  host: your.sftp.host
-  port: 22
-  username: your-username
-  password: your-password
-```
-
-#### 6. Using the Service
-
-In your Spring Boot application or any service:
-
-```kotlin
-import org.springframework.beans.factory.annotation.Autowired
-import org.springframework.boot.CommandLineRunner
-import org.springframework.stereotype.Component
-import java.io.File
-
-@Component
-class FileUploader @Autowired constructor(private val sftpService: SftpService) : CommandLineRunner {
-    
-    override fun run(vararg args: String?) {
-        val file = File("path/to/your/file.txt")
-        sftpService.uploadFile(file) // Uses default "/" directory
-    }
-}
-```
-
-### Notes:
-- By default, the directory is set to `/`. If no remote directory is passed, this default will be used.
-- The `SftpConfig` class can be extended to read host, port, username, and password from `application.yml` instead of hardcoding.
-
-### Building the JAR
-
-Run the following command to build the JAR:
-
-```bash
-./gradlew build
-```
-
-This will generate a JAR file that you can reuse in other projects for connecting to SFTP and uploading files.
+### Summary
+- The test cases cover various scenarios such as uploading a file to the default or specified directory, and handling exceptions during the upload process.
+- **MockK** is used to mock `SftpConnectionFactory` and `ChannelSftp` to isolate and test the `uploadFile` method without real SFTP connections.
