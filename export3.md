@@ -1,121 +1,191 @@
-To enforce properties to be defined in the `application.yml` file for a Spring Boot JAR that will be included in other projects, you can follow these steps. The goal is to make sure that the required properties are provided and raise an error if they are missing. This can be achieved using `@ConfigurationProperties` with validation annotations and integrating with Spring Boot’s property validation mechanisms.
+To create a **Spring Cloud Function for Google Cloud Platform** (GCP) that processes **Google Cloud Storage (GCS) file publish events** using Spring Boot with Kotlin, here’s a step-by-step guide:
 
-### 1. Use `@ConfigurationProperties` with Validation
+### 1. Project Setup
 
-You can define a configuration properties class that will load the properties from the `application.yml` file. To enforce that specific properties are provided, you can use validation annotations such as `@NotNull`.
-
-First, add the necessary dependencies for validation in your `build.gradle.kts`:
+First, configure your project by adding the necessary dependencies for Spring Cloud Function, Google Cloud Functions, and Google Cloud Storage in your `build.gradle.kts`.
 
 ```kotlin
+plugins {
+    id("org.springframework.boot") version "3.1.0"
+    id("io.spring.dependency-management") version "1.0.15.RELEASE"
+    kotlin("jvm") version "1.8.20"
+    kotlin("plugin.spring") version "1.8.20"
+}
+
+group = "com.example"
+version = "1.0.0-SNAPSHOT"
+java.sourceCompatibility = JavaVersion.VERSION_17
+
+repositories {
+    mavenCentral()
+}
+
 dependencies {
-    implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.springframework.boot:spring-boot-starter")
+    implementation("org.springframework.cloud:spring-cloud-function-adapter-gcp:3.2.8") // GCP function adapter
+    implementation("com.google.cloud.functions:functions-framework-api:1.0.4") // Google Functions API
+    implementation("com.google.cloud:google-cloud-storage:2.11.0") // GCS client
+    implementation("org.jetbrains.kotlin:kotlin-reflect")
+    implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8")
+    testImplementation("org.springframework.boot:spring-boot-starter-test")
+}
+
+tasks.withType<KotlinCompile> {
+    kotlinOptions {
+        freeCompilerArgs = listOf("-Xjsr305=strict")
+        jvmTarget = "17"
+    }
+}
+
+tasks.withType<Test> {
+    useJUnitPlatform()
 }
 ```
 
-### 2. Create the Configuration Properties Class with Validation
+### 2. Create the GCS Event Listener Function
 
-Define a configuration properties class that reads and validates the required properties. Use `@NotNull` or other validation annotations to enforce the presence of required properties.
+Define a **function** that listens to new file events (GCS Object Finalize events) and processes them.
 
-For example, create a `SftpProperties.kt` class with validation:
-
-```kotlin
-package com.example.sftp
-
-import org.springframework.boot.context.properties.ConfigurationProperties
-import org.springframework.validation.annotation.Validated
-import jakarta.validation.constraints.NotNull
-
-@Validated
-@ConfigurationProperties(prefix = "sftp")
-data class SftpProperties(
-    @field:NotNull(message = "SFTP host must be defined")
-    var host: String? = null,
-
-    @field:NotNull(message = "SFTP port must be defined")
-    var port: Int? = null,
-
-    @field:NotNull(message = "SFTP username must be defined")
-    var username: String? = null,
-
-    @field:NotNull(message = "SFTP password must be defined")
-    var password: String? = null,
-
-    var remoteDirectory: String = "/"
-)
-```
-
-In this class, fields like `host`, `port`, `username`, and `password` are annotated with `@NotNull`. If any of these properties are missing in the `application.yml` file, Spring Boot will throw a validation error during startup.
-
-### 3. Enable Configuration Properties in a Spring Configuration Class
-
-Make sure to enable your `@ConfigurationProperties` class in the configuration. You can do this by using the `@EnableConfigurationProperties` annotation in your configuration class or Spring Boot application class:
+Create a `StorageEventListener.kt` class:
 
 ```kotlin
-package com.example.sftp
+package com.example.demo
 
-import org.springframework.boot.context.properties.EnableConfigurationProperties
-import org.springframework.context.annotation.Configuration
+import com.google.cloud.functions.CloudEventsFunction
+import com.google.cloud.storage.Storage
+import io.cloudevents.CloudEvent
+import org.springframework.stereotype.Component
+import com.google.cloud.storage.StorageOptions
+import org.slf4j.LoggerFactory
 
-@Configuration
-@EnableConfigurationProperties(SftpProperties::class)
-class SftpConfig
+@Component
+class StorageEventListener : CloudEventsFunction {
+
+    private val logger = LoggerFactory.getLogger(StorageEventListener::class.java)
+    private val storage: Storage = StorageOptions.getDefaultInstance().service
+
+    override fun accept(event: CloudEvent) {
+        val bucket = event.attributes["bucket"] ?: "unknown"
+        val file = event.attributes["name"] ?: "unknown"
+
+        logger.info("New file published to bucket $bucket: $file")
+
+        // Fetch file metadata or content from GCS
+        val blob = storage.get(bucket, file)
+
+        if (blob != null) {
+            // Example: Read the file content
+            val content = String(blob.getContent())
+            logger.info("File content: $content")
+        } else {
+            logger.warn("File not found: $file")
+        }
+    }
+}
 ```
 
-### 4. Define the Required Properties in `application.yml`
+This class processes the new file event by retrieving the file name and bucket from the event's `CloudEvent` attributes. It fetches the file content from GCS using the `Google Cloud Storage` client and logs the file content (or processes it as needed).
 
-In any Spring Boot project that includes your JAR, you’ll need to define the required properties in the `application.yml` file. If the properties are not provided, Spring Boot will fail to start with an error message indicating which properties are missing.
+### 3. `application.yml` Configuration
+
+In your `application.yml`, you can configure the function name if needed:
 
 ```yaml
-sftp:
-  host: your-sftp-host
-  port: 22
-  username: your-username
-  password: your-password
-  remoteDirectory: /optional/remote/directory
+spring:
+  cloud:
+    function:
+      definition: storageEventListener
 ```
 
-### 5. Handle Missing Properties
+### 4. Running the Application Locally
 
-When properties are missing or invalid, Spring Boot will fail the startup with a descriptive message. For example, if the `host` property is missing, the startup error will look like this:
+Since you can't fully simulate GCP Storage events locally, you can create a simple REST controller to simulate the event trigger:
 
-```
-javax.validation.ConstraintViolationException: Validation failed for classes [com.example.sftp.SftpProperties] during startup. 
-Property: sftp.host
-Message: SFTP host must be defined
-```
-
-This ensures that the application won’t start unless all required properties are provided.
-
-### 6. Optionally Provide Default Values
-
-If certain properties are optional, you can provide default values in the configuration properties class:
+Create a `LocalEventSimulator.kt` class:
 
 ```kotlin
-data class SftpProperties(
-    @field:NotNull(message = "SFTP host must be defined")
-    var host: String? = null,
+package com.example.demo
 
-    @field:NotNull(message = "SFTP port must be defined")
-    var port: Int? = 22, // Default value
+import io.cloudevents.CloudEvent
+import io.cloudevents.core.builder.CloudEventBuilder
+import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.RequestBody
+import org.springframework.web.bind.annotation.RestController
+import java.net.URI
 
-    @field:NotNull(message = "SFTP username must be defined")
-    var username: String? = null,
+@RestController
+class LocalEventSimulator(val storageEventListener: StorageEventListener) {
 
-    @field:NotNull(message = "SFTP password must be defined")
-    var password: String? = null,
+    @PostMapping("/simulate-event")
+    fun simulateEvent(@RequestBody eventPayload: Map<String, String>) {
+        val bucket = eventPayload["bucket"] ?: "test-bucket"
+        val name = eventPayload["name"] ?: "test-file.txt"
 
-    var remoteDirectory: String = "/" // Default value
-)
+        // Simulating a CloudEvent for a new file in GCS
+        val cloudEvent: CloudEvent = CloudEventBuilder.v1()
+            .withId("12345")
+            .withSource(URI.create("https://example.com/storage"))
+            .withType("google.storage.object.finalize")
+            .withDataContentType("application/json")
+            .withAttribute("bucket", bucket)
+            .withAttribute("name", name)
+            .build()
+
+        storageEventListener.accept(cloudEvent)
+    }
+}
 ```
 
-This way, if the `port` or `remoteDirectory` properties are not provided in `application.yml`, the defaults will be used.
+You can simulate the GCS event locally by posting to the `/simulate-event` endpoint with a sample payload, such as:
 
-### Summary
+```json
+{
+  "bucket": "my-bucket",
+  "name": "my-file.txt"
+}
+```
 
-1. **Use `@ConfigurationProperties` with validation annotations** (`@NotNull`, etc.) to enforce required properties.
-2. **Enable configuration properties** using `@EnableConfigurationProperties` in your configuration class.
-3. **Define required properties** in `application.yml` when including the JAR in other applications.
-4. If any required properties are missing, Spring Boot will fail to start with an appropriate validation error message.
+Run the application locally using:
 
-This approach ensures that properties required for your JAR are properly enforced across all applications using it.
+```bash
+./gradlew bootRun
+```
+
+### 5. Deploying the Function to Google Cloud Functions
+
+Once the function works locally, you can deploy it to Google Cloud Functions.
+
+First, build the project:
+
+```bash
+./gradlew clean build
+```
+
+Then deploy it to Google Cloud Functions:
+
+```bash
+gcloud functions deploy processStorageEvent \
+    --entry-point=com.example.demo.StorageEventListener \
+    --runtime=java17 \
+    --trigger-event=google.storage.object.finalize \
+    --trigger-resource=<YOUR_BUCKET_NAME> \
+    --memory=512MB \
+    --region=<YOUR_REGION>
+```
+
+- Replace `<YOUR_BUCKET_NAME>` with the actual GCS bucket you want to listen to.
+- Replace `<YOUR_REGION>` with your preferred GCP region.
+
+### 6. Testing the Google Cloud Function
+
+To test, upload a file to the specified GCS bucket. The function will automatically trigger and process the new file event.
+
+You can also check logs for function execution via:
+
+```bash
+gcloud functions logs read processStorageEvent
+```
+
+### Conclusion
+
+This example demonstrates how to create a **Spring Boot Kotlin** application using **Spring Cloud Function** that listens to **Google Cloud Storage** events, processes newly uploaded files, and runs as a **Google Cloud Function**.
