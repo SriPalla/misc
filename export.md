@@ -1,126 +1,93 @@
-To create a Spring Boot Kotlin application as a Google Cloud Function that listens to Google Cloud Storage events and run it locally, you can follow these steps. There isn't an official local emulator for Google Cloud Functions like the `azureFunctionsRun` task, but we can simulate the function locally using `spring-cloud-function` and Spring Boot.
+To handle this reconciliation process and perform updates based on the SOR (Source of Record) value, while managing timestamps and flags for manual intervention, here’s a step-by-step approach for implementing the logic:
 
-Here’s a complete example:
+### 1. **Fetch Data from System 1 and System 2**
+   - Retrieve the relevant customer profile fields (Name, Address, Phone, etc.) from both `system1` and `system2` along with their respective timestamps.
 
-### 1. Setup the Spring Boot Kotlin Project
+### 2. **Define the Comparison Logic**
+   - Loop through each field in the customer profile (e.g., Name, Address, etc.).
+   - For each field:
+     - **Check if the values in `system1` and `system2` match**:
+       - If **they match**, ignore this field and move to the next.
+     - If **they don’t match**, proceed with the update logic based on the `SOR` and timestamps.
 
-Add the necessary dependencies in your `build.gradle.kts`:
+### 3. **Perform Updates Based on `SOR` Value**
+   - If `sor == "system1"`:
+     - Compare the `timestamp` of `system1` and `system2` for the field.
+     - If `system1` has a **more recent timestamp**, update `system2` with `system1`'s field value.
+     - If `system2` is more recent, flag it for **manual intervention**.
+   - If `sor == "system2"`:
+     - Similarly, compare the timestamps of `system1` and `system2`.
+     - If `system2` has a more recent timestamp, update `system1`.
+     - If `system1` is more recent, flag it for manual intervention.
+   - If `sor == "Manual"`:
+     - Always **flag for manual intervention**, as human input is required for reconciling these changes.
 
-```kotlin
-plugins {
-    id("org.springframework.boot") version "3.1.0"
-    id("io.spring.dependency-management") version "1.0.15.RELEASE"
-    kotlin("jvm") version "1.8.20"
-    kotlin("plugin.spring") version "1.8.20"
-}
+### 4. **Update Fields Based on Recent Timestamps**
+   - If the `SOR` indicates one system but the **other system has a more recent timestamp**, manual intervention is needed:
+     - Flag this field for **manual review**, since it’s unclear which data should be the source of truth.
+   - Use the field with the most recent timestamp from the SOR system, except if overridden by manual intervention.
 
-dependencies {
-    implementation("org.springframework.boot:spring-boot-starter-web")
-    implementation("org.springframework.cloud:spring-cloud-function-adapter-gcp:3.2.8") // Google Cloud Function Adapter
-    implementation("com.google.cloud.functions:functions-framework-api:1.0.4") // Google Cloud Functions API
-    implementation("org.jetbrains.kotlin:kotlin-reflect")
-    implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8")
-    testImplementation("org.springframework.boot:spring-boot-starter-test")
-}
-
-tasks.withType<KotlinCompile> {
-    kotlinOptions {
-        freeCompilerArgs = listOf("-Xjsr305=strict")
-        jvmTarget = "17"
-    }
-}
-
-tasks.withType<Test> {
-    useJUnitPlatform()
-}
-```
-
-### 2. Create the Storage Event Listener
-
-Create a function that will listen to Google Cloud Storage events. Here, we use the `GoogleCloudStorageEvent`.
+### 5. **Code Example in Kotlin**
+Here’s a basic Kotlin structure that demonstrates this reconciliation:
 
 ```kotlin
-import com.google.cloud.functions.CloudEventsFunction
-import com.google.cloud.storage.Storage
-import io.cloudevents.CloudEvent
-import org.springframework.stereotype.Component
+data class CustomerProfile(
+    val system1Id: String,
+    val system2Id: String,
+    val fieldName: String,
+    val sor: String, // "system1", "system2", "Manual"
+    val system1Timestamp: Long,
+    val system2Timestamp: Long,
+    val system1FieldData: String?,
+    val system2FieldData: String?
+)
 
-@Component
-class GcsEventListener : CloudEventsFunction {
+fun reconcileFields(profiles: List<CustomerProfile>): List<String> {
+    val manualInterventionList = mutableListOf<String>()
 
-    override fun accept(event: CloudEvent) {
-        // Parse the storage event
-        val storageEvent = event.data?.toBytes()?.let { String(it) } ?: "No Data"
-        
-        // Log event details
-        println("Received Cloud Storage event: $storageEvent")
-        
-        // Add your business logic here
+    profiles.forEach { profile ->
+        if (profile.system1FieldData != profile.system2FieldData) {
+            when (profile.sor) {
+                "system1" -> {
+                    if (profile.system1Timestamp > profile.system2Timestamp) {
+                        // Update system2 with system1's value
+                        println("Update system2 with ${profile.system1FieldData} for field ${profile.fieldName}")
+                    } else {
+                        // Flag for manual intervention
+                        manualInterventionList.add("Manual intervention needed for field ${profile.fieldName}")
+                    }
+                }
+                "system2" -> {
+                    if (profile.system2Timestamp > profile.system1Timestamp) {
+                        // Update system1 with system2's value
+                        println("Update system1 with ${profile.system2FieldData} for field ${profile.fieldName}")
+                    } else {
+                        // Flag for manual intervention
+                        manualInterventionList.add("Manual intervention needed for field ${profile.fieldName}")
+                    }
+                }
+                "Manual" -> {
+                    // Always flag for manual intervention
+                    manualInterventionList.add("Manual intervention needed for field ${profile.fieldName}")
+                }
+            }
+        }
     }
+
+    return manualInterventionList
 }
 ```
 
-### 3. Configure the Function in `application.yml`
+### 6. **Output Example**
+This example assumes you have a list of customer profiles and performs reconciliation based on the provided logic. The function will either update the necessary system or flag the field for manual intervention if required.
 
-```yaml
-spring:
-  cloud:
-    function:
-      definition: gcsEventListener
-```
+---
 
-### 4. Running the Application Locally
+### Summary:
+- **Ignore fields** where values match.
+- **Update fields** based on the SOR value and timestamp comparisons.
+- **Flag fields** for manual intervention where:
+  - SOR is "Manual".
+  - The non-SOR system has a more recent timestamp than the SOR system.
 
-Although Google Cloud Functions doesn't have a local run plugin like `azureFunctionsRun`, you can simulate the behavior locally using Spring Boot. Here's how you can run your function locally:
-
-- **Create a Local Controller to Simulate Event Trigger**:
-
-```kotlin
-import org.springframework.web.bind.annotation.PostMapping
-import org.springframework.web.bind.annotation.RequestBody
-import org.springframework.web.bind.annotation.RestController
-
-@RestController
-class LocalStorageController(val gcsEventListener: GcsEventListener) {
-
-    @PostMapping("/simulate-gcs-event")
-    fun simulateEvent(@RequestBody body: String) {
-        // Simulate the event processing
-        val cloudEvent = CloudEventBuilder.v1()
-            .withId("1234")
-            .withSource(URI.create("/local-simulation"))
-            .withType("google.cloud.storage.object.finalize")
-            .withDataContentType("application/json")
-            .withData(body.toByteArray())
-            .build()
-        
-        gcsEventListener.accept(cloudEvent)
-    }
-}
-```
-
-Now you can run your application using `./gradlew bootRun` and send a POST request to `http://localhost:8080/simulate-gcs-event` with a JSON payload to simulate the Google Cloud Storage event.
-
-### 5. Deploy to Google Cloud Functions
-
-Once you’re satisfied with the local testing, you can deploy the function to Google Cloud using `gcloud` CLI:
-
-1. Package the application as a fat JAR:
-
-    ```bash
-    ./gradlew clean build
-    ```
-
-2. Deploy the function:
-
-    ```bash
-    gcloud functions deploy gcsEventListener \
-        --entry-point=com.example.GcsEventListener \
-        --runtime=java17 \
-        --trigger-resource=<your-bucket> \
-        --trigger-event=google.storage.object.finalize \
-        --memory=512MB \
-        --region=<your-region>
-    ```
-
-This setup allows you to develop and test the function locally and deploy it to Google Cloud Functions when ready.
+This process ensures that the source of record is respected while also maintaining the flexibility to handle discrepancies in data freshness across systems.
